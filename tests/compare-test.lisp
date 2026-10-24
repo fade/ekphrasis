@@ -12,9 +12,12 @@
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
                 #:compare-snapshot
+                #:contrast-ratio
                 #:failing-findings
                 #:finding-box
                 #:finding-check
+                #:finding-container
+                #:finding-detail
                 #:finding-element-id
                 #:finding-expected
                 #:finding-measured
@@ -23,7 +26,9 @@
                 #:finding-where
                 #:finding-why
                 #:make-element
-                #:make-snapshot))
+                #:make-snapshot
+                #:make-spec
+                #:make-spec-element))
 
 (in-package #:ekphrasis/tests/compare-test)
 
@@ -35,23 +40,28 @@
                         (list :bravo :kind :session-pill :label "bravo"))))
 
 (defun pill (id label left)
-  "Return a session pill element ID labelled LABEL at LEFT, and its label and band inside it."
+  "Return a session pill element ID labelled LABEL at LEFT, and its label and band inside it.
+The label is white on the pane's gray20."
   (list (make-element :id id :kind :session-pill :text label :box (list left 8 (+ left 64) 30))
         (make-element :id (+ id 1) :kind :text :text label :container id
-                      :box (list (+ left 12) 15 (+ left 52) 28))
+                      :box (list (+ left 12) 15 (+ left 52) 28)
+                      :ink (list 1 1 1) :background (list 0.2 0.2 0.2))
         (make-element :id (+ id 2) :kind :fill :container id
                       :box (list left 8 (+ left 64) 10))))
 
 (defun header-snapshot (&key (bravo "bravo") extra)
   "Return a hand-built snapshot of the header: the title, alpha, a pill labelled BRAVO unless
-BRAVO is NIL, a target outline, and EXTRA, a further label drawn as a pill at x 520."
+BRAVO is NIL, a target outline, and EXTRA, a further label drawn as a pill at x 520.
+Every text and outline mark is white on gray20, well above both contrast thresholds."
   (make-snapshot
    :view :header
    :elements (append (list (make-element :id 1 :kind :text :text "EKPHRASIS"
-                                         :box (list 16 14 133 36)))
+                                         :box (list 16 14 133 36)
+                                         :ink (list 1 1 1) :background (list 0.2 0.2 0.2)))
                      (pill 2 "alpha" 660)
                      (when bravo (pill 5 bravo 732))
-                     (list (make-element :id 8 :kind :outline :box (list 300 10 380 40)))
+                     (list (make-element :id 8 :kind :outline :box (list 300 10 380 40)
+                                         :ink (list 1 1 1) :background (list 0.2 0.2 0.2)))
                      (when extra (pill 9 extra 520)))))
 
 (defun cases ()
@@ -118,3 +128,120 @@ BRAVO is NIL, a target outline, and EXTRA, a further label drawn as a pill at x 
       (true (member :expected why))
       (true (member :measured why))
       (is equal '(:recorded) (getf why :evidence)))))
+
+(defun mark (kind ink background &key (id 12) container text (box (list 299 9 381 41)))
+  "Return an element of KIND drawn in INK over BACKGROUND, both sRGB lists or NIL.
+It is element ID at BOX inside CONTAINER, drawing TEXT."
+  (make-element :id id :kind kind :text text :box box :container container
+                :ink ink :background background))
+
+(defun mark-snapshot (&rest elements)
+  "Return a snapshot of the header view drawing ELEMENTS."
+  (make-snapshot :view :header :elements elements))
+
+(defun spec-for (kind &optional contrast)
+  "Return a spec record for the header naming one unlabelled element of KIND, with the :CONTRAST
+clause CONTRAST."
+  (make-spec :view :header
+             :elements (list (make-spec-element :id :target :kind kind))
+             :contrast contrast))
+
+(defun black-outline ()
+  "Return the snapshot of one black outline, element 12, on gray20: 1.662 to 1, below 3.0."
+  (mark-snapshot (mark :outline (list 0 0 0) (list 0.2 0.2 0.2))))
+
+(define-test low-contrast-mark-is-not-perceivable
+  "An outline below the non-text threshold gives one located :CONTRAST error with its ratio,
+threshold, and colours."
+  (let* ((findings (compare-snapshot (black-outline) (spec-for :outline)))
+         (finding (first findings))
+         (detail (finding-detail finding)))
+    (is = 1 (length findings))
+    (is eq :contrast (finding-check finding))
+    (is eq :error (finding-severity finding))
+    (true (< (abs (- (finding-measured finding) 1.662)) 0.005) "measured ~A"
+          (finding-measured finding))
+    (is = 3.0 (finding-expected finding))
+    (is = 3.0 (getf detail :threshold))
+    (is = (finding-measured finding) (getf detail :ratio))
+    (is string= "#000000" (getf detail :ink))
+    (is string= "#333333" (getf detail :background))
+    (is eq :non-text (getf detail :category))
+    (is = 12 (finding-element-id finding))
+    (is equal '(299 9 381 41) (finding-box finding))))
+
+(define-test threshold-is-strict
+  "A ratio equal to its threshold passes; a threshold above it by 1d-6 fails it."
+  (let* ((ink (list 0.53 0.53 0.53))
+         (background (list 0.2 0.2 0.2))
+         (ratio (contrast-ratio ink background))
+         (snapshot (mark-snapshot (mark :text ink background))))
+    (is equal '() (compare-snapshot snapshot (spec-for :text) :thresholds (list :text ratio)))
+    (is = 1 (length (compare-snapshot snapshot (spec-for :text)
+                                      :thresholds (list :text (+ ratio 1d-6)))))))
+
+(define-test spec-threshold-overrides-default
+  "A spec's :CONTRAST clause replaces the default threshold for the keys it sets."
+  (is equal '() (compare-snapshot (black-outline) (spec-for :outline (list :non-text 1.5)))))
+
+(define-test call-threshold-overrides-spec
+  "A threshold given to the call replaces the spec's, and the finding records the one applied."
+  (let ((findings (compare-snapshot (black-outline) (spec-for :outline (list :non-text 1.5))
+                                    :thresholds (list :non-text 2.0))))
+    (is = 1 (length findings))
+    (is eq :contrast (finding-check (first findings)))
+    (is = 2.0 (finding-expected (first findings)))))
+
+(define-test text-and-non-text-thresholds-differ
+  "One colour pair at about 3.5 to 1 fails as text, against 4.5, and passes as an outline,
+against 3.0."
+  (let ((ink (list 0.53 0.53 0.53))
+        (background (list 0.2 0.2 0.2)))
+    (let ((findings (compare-snapshot (mark-snapshot (mark :text ink background))
+                                      (spec-for :text))))
+      (is = 1 (length findings))
+      (is eq :contrast (finding-check (first findings)))
+      (is eq :text (getf (finding-detail (first findings)) :category))
+      (is = 4.5 (finding-expected (first findings))))
+    (is equal '() (compare-snapshot (mark-snapshot (mark :outline ink background))
+                                    (spec-for :outline)))))
+
+(define-test unresolved-ink-is-a-warning
+  "A mark whose ink has no fixed colour gives one :UNRESOLVED-INK warning, which does not fail."
+  (let* ((findings (compare-snapshot (mark-snapshot (mark :outline nil (list 0.2 0.2 0.2)))
+                                     (spec-for :outline)))
+         (finding (first findings)))
+    (is = 1 (length findings))
+    (is eq :unresolved-ink (finding-check finding))
+    (is eq :warning (finding-severity finding))
+    (is equal '(:ink) (getf (finding-detail finding) :unresolved))
+    (is = 12 (finding-element-id finding))
+    (is equal '() (failing-findings findings))))
+
+(define-test fills-and-controls-are-not-judged-for-contrast
+  "A fill and a session pill drawn in their background's own colour give no finding."
+  (let ((grey (list 0.2 0.2 0.2)))
+    (is equal '()
+        (compare-snapshot (mark-snapshot (mark :session-pill grey grey :id 1)
+                                         (mark :fill grey grey :id 2))
+                          (spec-for :session-pill)))))
+
+(define-test contrast-finding-names-its-spec-element
+  "A faint top-level mark paired with a spec element carries its spec id; a faint mark inside a
+container carries no spec id and names its container."
+  (let* ((faint (list 0.1 0.1 0.1))
+         (grey (list 0.2 0.2 0.2))
+         (spec (list :view :header
+                     :elements (list (list :title :kind :text :label "EKPHRASIS")
+                                     (list :alpha :kind :session-pill :label "alpha"))))
+         (findings (compare-snapshot
+                    (mark-snapshot (mark :text faint grey :id 1 :text "EKPHRASIS")
+                                   (mark :session-pill nil nil :id 2 :text "alpha")
+                                   (mark :text faint grey :id 3 :text "alpha" :container 2))
+                    spec)))
+    (is equal '(:contrast :contrast) (mapcar #'finding-check findings))
+    (is equal '(1 3) (mapcar #'finding-element-id findings))
+    (is eq :title (finding-spec-id (first findings)))
+    (false (finding-container (first findings)))
+    (false (finding-spec-id (second findings)))
+    (is eql 2 (finding-container (second findings)))))

@@ -22,12 +22,16 @@
 (in-package #:ekphrasis/tests/run-test)
 
 (defun header-snapshot ()
-  "Return a snapshot of the header view drawing two text elements."
+  "Return a snapshot of the header view drawing two text elements, white on gray20."
   (make-snapshot :view :header
                  :elements (list (make-element :id 1 :kind :text :text "EKPHRASIS"
-                                               :box (list 16 14 133 36))
+                                               :box (list 16 14 133 36)
+                                               :ink (list 1 1 1)
+                                               :background (list 0.2 0.2 0.2))
                                  (make-element :id 2 :kind :text :text "offline"
-                                               :box (list 16 40 72 56)))))
+                                               :box (list 16 40 72 56)
+                                               :ink (list 1 1 1)
+                                               :background (list 0.2 0.2 0.2)))))
 
 (defun header-spec ()
   "Return a spec naming the header's title and a status it draws with other text."
@@ -98,3 +102,17 @@ painting order, then :run-end with the counts."
       (declare (ignore findings report))
       (is equal (event-kinds events)
           (event-kinds (reverse (recorded-events observer)))))))
+
+(define-test thresholds-reach-the-comparison
+  "A threshold passed to the run reaches the comparison: a black outline on gray20, at 1.662 to
+1, is found against the default 3.0 and cleared against 1.5."
+  (let ((spec (list :view :header :elements (list (list :target :kind :outline))))
+        (snapshot (make-snapshot :view :header
+                                 :elements (list (make-element :id 1 :kind :outline
+                                                               :box (list 300 10 380 40)
+                                                               :ink (list 0 0 0)
+                                                               :background (list 0.2 0.2 0.2))))))
+    (is equal '() (run-check spec snapshot :thresholds (list :non-text 1.5)))
+    (let ((findings (run-check spec snapshot)))
+      (is = 1 (length findings))
+      (is eq :contrast (finding-check (first findings))))))

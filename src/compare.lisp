@@ -6,9 +6,11 @@
 (defpackage #:ekphrasis/src/compare
   (:use #:cl)
   (:import-from #:ekphrasis/src/model
+                #:element-background
                 #:element-box
                 #:element-container
                 #:element-id
+                #:element-ink
                 #:element-kind
                 #:element-text
                 #:make-finding
@@ -16,10 +18,17 @@
                 #:snapshot-view)
   (:import-from #:ekphrasis/src/spec
                 #:parse-spec
+                #:spec-contrast
                 #:spec-elements
                 #:spec-element-id
                 #:spec-element-kind
                 #:spec-element-label)
+  (:import-from #:ekphrasis/src/contrast
+                #:below-threshold-p
+                #:contrast-ratio
+                #:resolve-thresholds)
+  (:import-from #:ekphrasis/src/rgb
+                #:rgb-to-hex)
   (:export #:compare-snapshot))
 
 (in-package #:ekphrasis/src/compare)
@@ -123,20 +132,91 @@ when nothing stands for it; and the drawn elements left unpaired, in painting or
                 :evidence (list :recorded)
                 :detail (list :kind (element-kind element))))
 
-(defun compare-snapshot (snapshot spec &key on-examine on-finding)
+(defun contrast-category (element)
+  "Return the contrast category ELEMENT is judged in: :TEXT for a :TEXT mark, :NON-TEXT for an
+:OUTLINE mark, or NIL for an element that is not judged for contrast.
+Fills and toolkit kinds return NIL: a presentation's colours repeat those of its label."
+  (case (element-kind element)
+    (:text :text)
+    (:outline :non-text)))
+
+(defun contrast-finding (element spec-id view ratio threshold category)
+  "Return the :CONTRAST error for ELEMENT in VIEW, whose ink against its background has RATIO,
+below THRESHOLD for CATEGORY. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL."
+  (make-finding :check :contrast
+                :severity :error
+                :spec-id spec-id
+                :view view
+                :container (element-container element)
+                :element-id (element-id element)
+                :box (element-box element)
+                :expected threshold
+                :measured ratio
+                :evidence (list :recorded)
+                :detail (list :ratio ratio
+                              :threshold threshold
+                              :ink (rgb-to-hex (element-ink element))
+                              :background (rgb-to-hex (element-background element))
+                              :category category
+                              :kind (element-kind element))))
+
+(defun unresolved-ink-finding (element spec-id view category)
+  "Return the :UNRESOLVED-INK warning for ELEMENT in VIEW, whose ink or background has no fixed
+colour. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL.
+The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing."
+  (make-finding :check :unresolved-ink
+                :severity :warning
+                :spec-id spec-id
+                :view view
+                :container (element-container element)
+                :element-id (element-id element)
+                :box (element-box element)
+                :expected nil
+                :measured nil
+                :evidence (list :recorded)
+                :detail (list :unresolved (append (unless (element-ink element) (list :ink))
+                                                  (unless (element-background element)
+                                                    (list :background)))
+                              :category category
+                              :kind (element-kind element))))
+
+(defun perceivability-finding (element spec-id view thresholds)
+  "Return the finding ELEMENT in VIEW earns for contrast, or NIL when it earns none.
+THRESHOLDS is a resolved plist (:TEXT text :NON-TEXT non-text). A :TEXT or :OUTLINE mark whose
+ink against its background is strictly below its category's threshold earns a :CONTRAST error;
+one with no fixed ink or background earns an :UNRESOLVED-INK warning. The ratio is not rounded.
+SPEC-ID is the id of the spec element ELEMENT stands for, or NIL."
+  (let ((category (contrast-category element)))
+    (when category
+      (if (and (element-ink element) (element-background element))
+          (let ((ratio (contrast-ratio (element-ink element) (element-background element)))
+                (threshold (getf thresholds category)))
+            (when (below-threshold-p ratio threshold)
+              (contrast-finding element spec-id view ratio threshold category)))
+          (unresolved-ink-finding element spec-id view category)))))
+
+(defun compare-snapshot (snapshot spec &key thresholds on-examine on-finding)
   "Judge SNAPSHOT against SPEC and return the findings in the order made.
 SPEC is a spec record or spec data; it is parsed with PARSE-SPEC, which may signal MALFORMED-SPEC.
 Presence is judged over the elements drawn on the view itself, outside any container: a spec
 element nothing stands for is :MISSING; one stood for by an element with other text is a :LABEL
 error; an unpaired element of a kind the spec names is an :UNEXPECTED warning. Kinds the spec
 does not name are not judged for presence.
-ON-EXAMINE, when non-NIL, is called with each element of SNAPSHOT in painting order.
+Perceivability is judged over every element, in painting order: a :TEXT or :OUTLINE mark below
+its contrast threshold is a :CONTRAST error, and one with no fixed ink or background is an
+:UNRESOLVED-INK warning. Fills and toolkit kinds are not judged for contrast.
+THRESHOLDS is a plist (:TEXT r :NON-TEXT r); each key it sets overrides the spec's :CONTRAST
+clause, which overrides *DEFAULT-CONTRAST-THRESHOLDS*.
+ON-EXAMINE, when non-NIL, is called with each element of SNAPSHOT in painting order, before its
+perceivability is judged.
 ON-FINDING, when non-NIL, is called with each finding as it is made."
   (let* ((spec (parse-spec spec))
          (view (snapshot-view snapshot))
          (elements (snapshot-elements snapshot))
          (spec-elements (spec-elements spec))
          (named-kinds (mapcar #'spec-element-kind spec-elements))
+         (thresholds (resolve-thresholds thresholds (spec-contrast spec)))
+         (stood-for '())
          (findings '()))
     (flet ((emit (finding)
              (when on-finding
@@ -147,13 +227,21 @@ ON-FINDING, when non-NIL, is called with each finding as it is made."
         (loop for (spec-element . element) in pairs
               do (cond ((null element)
                         (emit (missing-finding spec-element view)))
-                       ((not (label-matches-p (spec-element-label spec-element)
-                                              (element-text element)))
-                        (emit (label-finding spec-element element view)))))
+                       (t
+                        (push (cons element (spec-element-id spec-element)) stood-for)
+                        (unless (label-matches-p (spec-element-label spec-element)
+                                                 (element-text element))
+                          (emit (label-finding spec-element element view))))))
         (dolist (element unpaired)
           (when (member (element-kind element) named-kinds :test #'eq)
             (emit (unexpected-finding element view)))))
-      (when on-examine
-        (dolist (element elements)
-          (funcall on-examine element))))
+      (dolist (element elements)
+        (when on-examine
+          (funcall on-examine element))
+        (let ((finding (perceivability-finding element
+                                               (cdr (assoc element stood-for :test #'eq))
+                                               view
+                                               thresholds)))
+          (when finding
+            (emit finding)))))
     (nreverse findings)))

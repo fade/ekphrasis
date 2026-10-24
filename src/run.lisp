@@ -48,10 +48,12 @@ or :RUN-END. Errors signalled by an observer propagate to the caller of RUN-CHEC
       (error 'type-error :datum snapshot :expected-type 'ekphrasis/src/model:snapshot))
     snapshot))
 
-(defun run-check (spec source &key observers)
+(defun run-check (spec source &key observers thresholds)
   "Judge the view SOURCE renders against SPEC, notifying OBSERVERS and any already attached.
 SPEC is a spec record or spec data. SOURCE is a snapshot or a function of no arguments
 returning one. OBSERVERS is a list of objects with an OBSERVE-RUN-EVENT method.
+THRESHOLDS is a plist (:TEXT r :NON-TEXT r) of contrast thresholds passed to COMPARE-SNAPSHOT;
+each key it sets overrides the spec's.
 Return three values: the findings, the report string, and the snapshot.
 Signal MALFORMED-SPEC for a malformed spec; observer errors propagate unchanged."
   (let* ((spec (parse-spec spec))
@@ -62,6 +64,7 @@ Signal MALFORMED-SPEC for a malformed spec; observer errors propagate unchanged.
            (findings
              (compare-snapshot
               snapshot spec
+              :thresholds thresholds
               :on-examine (when *run-observers*
                             (lambda (element)
                               (notify :event :element-examined
