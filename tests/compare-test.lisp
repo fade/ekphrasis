@@ -245,3 +245,75 @@ container carries no spec id and names its container."
     (false (finding-container (first findings)))
     (false (finding-spec-id (second findings)))
     (is eql 2 (finding-container (second findings)))))
+
+(defun ordered-spec (&key (axis :left-to-right) (ids (list :alpha :bravo :charlie)))
+  "Return a spec naming the session pills alpha, bravo, and charlie, with one :ORDER group
+along AXIS over IDS."
+  (list :view :header
+        :elements (list (list :alpha :kind :session-pill :label "alpha")
+                        (list :bravo :kind :session-pill :label "bravo")
+                        (list :charlie :kind :session-pill :label "charlie"))
+        :order (list (list* axis ids))))
+
+(defun placed-pills (&rest placements)
+  "Return a header snapshot of session pills, one per PLACEMENTS entry (label left top), in the
+order given, which is their painting order. Each pill is 64 by 22."
+  (make-snapshot
+   :view :header
+   :elements (loop for (label left top) in placements
+                   for id from 1
+                   collect (make-element :id id :kind :session-pill :text label
+                                         :box (list left top (+ left 64) (+ top 22))))))
+
+(define-test swapped-elements-give-one-order-finding
+  "Bravo drawn left of alpha gives exactly one :ORDER error for the group, with the expected and
+drawn sequences, one displaced id, and the box around all three pills."
+  (let* ((findings (compare-snapshot (placed-pills (list "alpha" 650 8)
+                                                   (list "bravo" 577 8)
+                                                   (list "charlie" 818 8))
+                                     (ordered-spec)))
+         (finding (first findings))
+         (detail (finding-detail finding)))
+    (is = 1 (length findings))
+    (is eq :order (finding-check finding))
+    (is eq :error (finding-severity finding))
+    (false (finding-spec-id finding))
+    (false (finding-element-id finding))
+    (is equal '(:alpha :bravo :charlie) (finding-expected finding))
+    (is equal '(:bravo :alpha :charlie) (finding-measured finding))
+    (is eq :left-to-right (getf detail :axis))
+    (true (member (getf detail :displaced) '((:alpha) (:bravo)) :test #'equal)
+          "displaced ~S" (getf detail :displaced))
+    (is equal '(577 8 882 30) (finding-box finding))))
+
+(define-test order-is-judged-on-position-not-drawing-order
+  "Pills painted charlie, bravo, alpha but placed alpha, bravo, charlie from the left are in order."
+  (is equal '() (compare-snapshot (placed-pills (list "charlie" 818 8)
+                                                (list "bravo" 734 8)
+                                                (list "alpha" 650 8))
+                                  (ordered-spec))))
+
+(define-test order-ignores-missing-members
+  "With bravo not drawn, alpha left of charlie gives the :MISSING finding and no :ORDER finding."
+  (let ((findings (compare-snapshot (placed-pills (list "alpha" 650 8)
+                                                  (list "charlie" 818 8))
+                                    (ordered-spec))))
+    (is equal '(:missing) (mapcar #'finding-check findings))
+    (is eq :bravo (finding-spec-id (first findings)))))
+
+(define-test top-to-bottom-groups-use-the-vertical-axis
+  "A :TOP-TO-BOTTOM group is judged on box top: a column drawn alpha, bravo, charlie downward is
+in order whatever the left edges, and one with charlie on top is not."
+  (is equal '() (compare-snapshot (placed-pills (list "alpha" 900 10)
+                                                (list "bravo" 100 40)
+                                                (list "charlie" 500 70))
+                                  (ordered-spec :axis :top-to-bottom)))
+  (let ((findings (compare-snapshot (placed-pills (list "alpha" 100 40)
+                                                  (list "bravo" 100 70)
+                                                  (list "charlie" 100 10))
+                                    (ordered-spec :axis :top-to-bottom))))
+    (is = 1 (length findings))
+    (is eq :order (finding-check (first findings)))
+    (is equal '(:charlie :alpha :bravo) (finding-measured (first findings)))
+    (is eq :top-to-bottom (getf (finding-detail (first findings)) :axis))
+    (is equal '(:charlie) (getf (finding-detail (first findings)) :displaced))))

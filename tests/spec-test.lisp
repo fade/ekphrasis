@@ -17,6 +17,7 @@
                 #:parse-spec
                 #:spec-contrast
                 #:spec-elements
+                #:spec-order
                 #:spec-element-id
                 #:spec-element-kind
                 #:spec-element-label
@@ -141,3 +142,40 @@ zero, negative, or not a real, an odd plist, a repeated key, and a value that is
     (destructuring-bind (what clause) entry
       (names-clause (list :view :header :elements (list (title-clause)) :contrast clause)
                     clause what))))
+
+(defun pill-clauses ()
+  "Return fresh element clauses for three session pills, alpha, bravo, and charlie."
+  (list (list :alpha :kind :session-pill :label "alpha")
+        (list :bravo :kind :session-pill :label "bravo")
+        (list :charlie :kind :session-pill :label "charlie")))
+
+(define-test order-clause-parses
+  "An :ORDER clause keeps each group as given, whether it precedes or follows :ELEMENTS; a spec
+without one has none."
+  (is equal '((:left-to-right :alpha :bravo :charlie))
+      (spec-order (parse-spec (list :view :header
+                                    :elements (pill-clauses)
+                                    :order (list (list :left-to-right :alpha :bravo :charlie))))))
+  (is equal '((:top-to-bottom :charlie :alpha))
+      (spec-order (parse-spec (list :order (list (list :top-to-bottom :charlie :alpha))
+                                    :view :header
+                                    :elements (pill-clauses)))))
+  (false (spec-order (parse-spec (list :view :header :elements (pill-clauses))))))
+
+(define-test malformed-order-is-named
+  "Each malformed :ORDER group is named by the condition: an unknown axis, an undeclared id, a
+repeated id, a group of one id, and a group that is not a list. An :ORDER value that is not a
+list is named itself."
+  (dolist (entry (list (list "axis :diagonal" (list :diagonal :alpha :bravo))
+                       (list "undeclared :delta" (list :left-to-right :alpha :delta))
+                       (list "repeated :alpha" (list :left-to-right :alpha :bravo :alpha))
+                       (list "one id" (list :left-to-right :alpha))
+                       (list "not a list" :alpha)))
+    (destructuring-bind (what group) entry
+      (let ((form (list :view :header
+                        :elements (pill-clauses)
+                        :order (list (list :left-to-right :alpha :bravo) group))))
+        (names-clause form group what))))
+  (let ((order "alpha bravo"))
+    (names-clause (list :view :header :elements (pill-clauses) :order order)
+                  order "order a string")))

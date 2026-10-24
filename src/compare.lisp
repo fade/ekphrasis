@@ -20,6 +20,7 @@
                 #:parse-spec
                 #:spec-contrast
                 #:spec-elements
+                #:spec-order
                 #:spec-element-id
                 #:spec-element-kind
                 #:spec-element-label)
@@ -132,6 +133,92 @@ when nothing stands for it; and the drawn elements left unpaired, in painting or
                 :evidence (list :recorded)
                 :detail (list :kind (element-kind element))))
 
+(defun kept-in-order (positions)
+  "Return the indices into POSITIONS, a list of distinct integers, of one longest increasing
+subsequence, in ascending order.
+Among predecessors of equal length, the one with the lowest position is kept, and among
+subsequences of equal length, the one ending at the lowest position, so the choice is fixed."
+  (let* ((vector (coerce positions 'vector))
+         (count (length vector))
+         (lengths (make-array count :initial-element 1))
+         (previous (make-array count :initial-element nil)))
+    (dotimes (i count)
+      (dotimes (j i)
+        (when (and (< (aref vector j) (aref vector i))
+                   (or (> (1+ (aref lengths j)) (aref lengths i))
+                       (and (= (1+ (aref lengths j)) (aref lengths i))
+                            (< (aref vector j) (aref vector (aref previous i))))))
+          (setf (aref lengths i) (1+ (aref lengths j))
+                (aref previous i) j))))
+    (let ((end nil))
+      (dotimes (i count)
+        (when (or (null end)
+                  (> (aref lengths i) (aref lengths end))
+                  (and (= (aref lengths i) (aref lengths end))
+                       (< (aref vector i) (aref vector end))))
+          (setf end i)))
+      (loop with kept = '()
+            for i = end then (aref previous i)
+            while i
+            do (push i kept)
+            finally (return kept)))))
+
+(defun box-union (boxes)
+  "Return the smallest box (x1 y1 x2 y2) holding every box in BOXES, or NIL when BOXES holds
+none. NIL entries are skipped."
+  (let ((boxes (remove nil boxes)))
+    (when boxes
+      (list (reduce #'min boxes :key #'first)
+            (reduce #'min boxes :key #'second)
+            (reduce #'max boxes :key #'third)
+            (reduce #'max boxes :key #'fourth)))))
+
+(defun order-key (axis element)
+  "Return where ELEMENT is drawn along AXIS: its box left for :LEFT-TO-RIGHT, its box top for
+:TOP-TO-BOTTOM. An element with no box sits at 0."
+  (or (if (eq axis :top-to-bottom)
+          (second (element-box element))
+          (first (element-box element)))
+      0))
+
+(defun order-finding (group pairs view)
+  "Return the :ORDER finding for GROUP, an :ORDER group (axis id ...), or NIL when it earns none.
+PAIRS are the conses (spec-element . element) PAIR-ELEMENTS returns. Only members stood for by
+a drawn element are judged, and fewer than two are not judged. Members are placed by where they
+are drawn along the axis, never by painting order; ties keep the expected order. The detail's
+:DISPLACED lists the members outside one longest run already in expected order."
+  (destructuring-bind (axis &rest ids) group
+    (let* ((members (loop for id in ids
+                          for element = (cdr (find id pairs
+                                                   :key (lambda (pair)
+                                                          (spec-element-id (car pair)))))
+                          when element
+                            collect (cons id element)))
+           (drawn (stable-sort (copy-list members) #'<
+                               :key (lambda (member) (order-key axis (cdr member)))))
+           (expected-ids (mapcar #'car members))
+           (drawn-ids (mapcar #'car drawn)))
+      (when (and (>= (length members) 2)
+                 (not (equal expected-ids drawn-ids)))
+        (let* ((positions (mapcar (lambda (id) (position id expected-ids)) drawn-ids))
+               (kept (kept-in-order positions)))
+          (make-finding :check :order
+                        :severity :error
+                        :spec-id nil
+                        :view view
+                        :container nil
+                        :element-id nil
+                        :box (box-union (mapcar (lambda (member) (element-box (cdr member)))
+                                                members))
+                        :expected expected-ids
+                        :measured drawn-ids
+                        :evidence (list :recorded)
+                        :detail (list :axis axis
+                                      :displaced (loop for id in drawn-ids
+                                                       for index from 0
+                                                       unless (member index kept)
+                                                         collect id))))))))
+
 (defun contrast-category (element)
   "Return the contrast category ELEMENT is judged in: :TEXT for a :TEXT mark, :NON-TEXT for an
 :OUTLINE mark, or NIL for an element that is not judged for contrast.
@@ -202,6 +289,8 @@ Presence is judged over the elements drawn on the view itself, outside any conta
 element nothing stands for is :MISSING; one stood for by an element with other text is a :LABEL
 error; an unpaired element of a kind the spec names is an :UNEXPECTED warning. Kinds the spec
 does not name are not judged for presence.
+Order is judged next: each :ORDER group whose drawn members sit out of the expected sequence
+along its axis gives one :ORDER error, judged on drawn position and never on painting order.
 Perceivability is judged over every element, in painting order: a :TEXT or :OUTLINE mark below
 its contrast threshold is a :CONTRAST error, and one with no fixed ink or background is an
 :UNRESOLVED-INK warning. Fills and toolkit kinds are not judged for contrast.
@@ -234,7 +323,11 @@ ON-FINDING, when non-NIL, is called with each finding as it is made."
                           (emit (label-finding spec-element element view))))))
         (dolist (element unpaired)
           (when (member (element-kind element) named-kinds :test #'eq)
-            (emit (unexpected-finding element view)))))
+            (emit (unexpected-finding element view))))
+        (dolist (group (spec-order spec))
+          (let ((finding (order-finding group pairs view)))
+            (when finding
+              (emit finding)))))
       (dolist (element elements)
         (when on-examine
           (funcall on-examine element))

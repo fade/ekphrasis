@@ -63,7 +63,7 @@ STATE is the expected state, or NIL; STATES lists the states it may be in, or NI
   (state nil)
   (states nil))
 
-(defparameter *spec-keys* '(:view :elements :contrast)
+(defparameter *spec-keys* '(:view :elements :order :contrast)
   "The top-level keys a spec may hold.")
 
 (defparameter *element-keys* '(:kind :label)
@@ -150,15 +150,48 @@ positive reals; NIL sets no threshold. Signal MALFORMED-SPEC naming CLAUSE when 
           do (malformed clause (format nil "contrast ~S must be a positive real" key)))
   clause)
 
+(defparameter *order-axes* '(:left-to-right :top-to-bottom)
+  "The axes an :ORDER group may be judged along.")
+
+(defun parse-order-group (group ids)
+  "Validate one :ORDER group (axis id id ...) and return it.
+AXIS is one of *ORDER-AXES*; at least two ids follow, each in IDS, none repeated.
+Signal MALFORMED-SPEC naming GROUP when it is not."
+  (unless (and (consp group) (proper-list-p group))
+    (malformed group "an order group must be a proper list (axis id id ...)"))
+  (unless (member (first group) *order-axes* :test #'eq)
+    (malformed group (format nil "order axis must be one of ~{~S~^ or ~}" *order-axes*)))
+  (let ((members (rest group)))
+    (when (< (length members) 2)
+      (malformed group "an order group must name at least two elements"))
+    (loop for (id . later) on members
+          do (unless (and (keywordp id) (member id ids :test #'eq))
+               (malformed group (format nil "order names ~S, which :elements does not declare"
+                                        id)))
+             (when (member id later :test #'eq)
+               (malformed group (format nil "order names ~S twice" id))))
+    group))
+
+(defun parse-order-clause (clause ids)
+  "Validate the value of a spec's :ORDER key and return it.
+CLAUSE is a proper list of groups, each checked by PARSE-ORDER-GROUP against IDS, the element
+ids the spec declares. Signal MALFORMED-SPEC naming CLAUSE when it is not a proper list."
+  (unless (proper-list-p clause)
+    (malformed clause "spec :order must be a proper list of groups"))
+  (dolist (group clause clause)
+    (parse-order-group group ids)))
+
 (defun parse-spec (form)
   "Return the spec FORM describes, as a spec record.
 FORM is a spec record, returned unchanged, or a plist (:view keyword :elements (clause ...)),
-optionally with :contrast (:text r :non-text r).
-:ELEMENTS is a non-empty proper list of element clauses with distinct ids. :CONTRAST sets
-positive real thresholds for either key.
+optionally with :order ((axis id id ...) ...) and :contrast (:text r :non-text r).
+:ELEMENTS is a non-empty proper list of element clauses with distinct ids. Each :ORDER group
+names an axis, :LEFT-TO-RIGHT or :TOP-TO-BOTTOM, and at least two distinct declared ids.
+:CONTRAST sets positive real thresholds for either key.
 Signal MALFORMED-SPEC naming the offending clause when FORM is not well formed: the whole form
 for a top-level key that is absent, unknown, or repeated, or a :VIEW that is not a keyword; the
-:ELEMENTS value when it is not a proper list; the :CONTRAST value when it is malformed; the
+:ELEMENTS value when it is not a proper list; the :ORDER value when it is not a proper list,
+and the group at fault otherwise; the :CONTRAST value when it is malformed; the
 element clause at fault otherwise, the later one for a repeated id. A circular list signals
 rather than looping.
 Never evaluates or reads any part of FORM."
@@ -189,6 +222,9 @@ Never evaluates or reads any part of FORM."
               (malformed clause (format nil "element id ~S is used twice"
                                         (spec-element-id element))))
             (push element parsed)))
+        (setf parsed (nreverse parsed))
         (make-spec :view view
-                   :elements (nreverse parsed)
+                   :elements parsed
+                   :order (parse-order-clause (clause-value form :order)
+                                              (mapcar #'spec-element-id parsed))
                    :contrast (parse-contrast-clause (clause-value form :contrast)))))))

@@ -71,6 +71,10 @@ Return the string written when STREAM is NIL, otherwise NIL."
                             (and (finding-element-id finding)
                                  (format nil "#~D" (finding-element-id finding)))))))
 
+(defun names-text (designators)
+  "Return DESIGNATORS as a parenthesised list of lower-case names: \"(alpha bravo)\"."
+  (format nil "(~{~A~^ ~})" (mapcar #'name-text designators)))
+
 (defun unresolved-text (unresolved)
   "Return what UNRESOLVED, a list of :INK and :BACKGROUND, says has no fixed colour:
 \"ink has no fixed colour\", or \"ink and background have no fixed colour\"."
@@ -105,6 +109,14 @@ Return the string written when STREAM is NIL, otherwise NIL."
                (box-text (finding-box finding))
                (where-text finding)
                (quoted-text (finding-measured finding))))
+      (:order
+       (format out "~A~A in ~A: expected ~A, drawn ~A, displaced ~A"
+               (name-text (getf (finding-detail finding) :axis))
+               (box-text (finding-box finding))
+               (where-text finding)
+               (names-text (finding-expected finding))
+               (names-text (finding-measured finding))
+               (names-text (getf (finding-detail finding) :displaced))))
       (:contrast
        (format out "~A (~A)~A in ~A: ~,2F below ~,2F (ink ~A on ~A)"
                (element-reference finding)

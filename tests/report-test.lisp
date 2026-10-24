@@ -131,3 +131,19 @@ The line names the element, its box, and the view, with the container's id when 
                              "  warning unresolved-ink #12 (outline) at (299 9 381 41) in header: "
                              "ink has no fixed colour")
         (format-finding unresolved nil))))
+
+(define-test order-line
+  "An :ORDER error reports its axis, the box around its group, and the expected, drawn, and
+displaced ids."
+  (let ((order (make-finding :check :order
+                             :severity :error
+                             :view :header
+                             :box (list 577 8 882 30)
+                             :expected (list :alpha :bravo :charlie)
+                             :measured (list :bravo :alpha :charlie)
+                             :detail (list :axis :left-to-right :displaced (list :bravo)))))
+    (is string= (concatenate 'string
+                             "  error order left-to-right at (577 8 882 30) in header: "
+                             "expected (alpha bravo charlie), drawn (bravo alpha charlie), "
+                             "displaced (bravo)")
+        (format-finding order nil))))
