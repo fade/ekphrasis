@@ -89,6 +89,23 @@ fenced)\" for a list of allowed states."
           (mapcar #'name-text unresolved)
           (rest unresolved)))
 
+(defun mark-clauses (detail)
+  "Return the clauses a perceivability line ends with for DETAIL, a finding's detail plist:
+\", label \" and the :LABEL text quoted, then \" of \" and the :CONTAINER-SPEC-ID when present;
+then \", only when highlighted\" when :STATE is the highlight feedback state :HIGHLIGHTED.
+Return \"\" when neither clause applies. No other state prints a clause."
+  (let ((label (getf detail :label))
+        (container-spec-id (getf detail :container-spec-id)))
+    (concatenate 'string
+                 (if label
+                     (format nil ", label ~A~@[ of ~A~]"
+                             (quoted-text label)
+                             (and container-spec-id (keyword-text container-spec-id)))
+                     "")
+                 (if (eq :highlighted (getf detail :state))
+                     ", only when highlighted"
+                     ""))))
+
 (defun write-finding-text (finding out)
   "Write the check-specific text of FINDING to OUT."
   (let ((*print-pretty* nil)
@@ -143,7 +160,7 @@ fenced)\" for a list of allowed states."
                (state-text (getf (finding-detail finding) :reported))
                (state-text (getf (finding-detail finding) :drawn))))
       (:contrast
-       (format out "~A (~A)~A in ~A: ~,2F below ~,2F (ink ~A on ~A)"
+       (format out "~A (~A)~A in ~A: ~,2F below ~,2F (ink ~A on ~A)~A"
                (element-reference finding)
                kind
                (box-text (finding-box finding))
@@ -151,14 +168,16 @@ fenced)\" for a list of allowed states."
                (getf (finding-detail finding) :ratio)
                (getf (finding-detail finding) :threshold)
                (getf (finding-detail finding) :ink)
-               (getf (finding-detail finding) :background)))
+               (getf (finding-detail finding) :background)
+               (mark-clauses (finding-detail finding))))
       (:unresolved-ink
-       (format out "~A (~A)~A in ~A: ~A"
+       (format out "~A (~A)~A in ~A: ~A~A"
                (element-reference finding)
                kind
                (box-text (finding-box finding))
                (where-text finding)
-               (unresolved-text (getf (finding-detail finding) :unresolved '(:ink)))))
+               (unresolved-text (getf (finding-detail finding) :unresolved '(:ink)))
+               (mark-clauses (finding-detail finding))))
       (t
        (format out "~A in ~A: expected ~S, measured ~S"
                (if (finding-spec-id finding) (keyword-text (finding-spec-id finding)) "element")

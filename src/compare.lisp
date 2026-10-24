@@ -294,9 +294,27 @@ Fills and toolkit kinds return NIL: a presentation's colours repeat those of its
     (:text :text)
     (:outline :non-text)))
 
-(defun contrast-finding (element spec-id view ratio threshold category)
+(defun mark-facts (element container-spec-id)
+  "Return the plist of facts about ELEMENT a perceivability finding's detail carries, each key only
+when it has a value, in order:
+- :LABEL, ELEMENT's text, for a :TEXT mark with a container;
+- :CONTAINER-SPEC-ID, CONTAINER-SPEC-ID, the id of the spec element ELEMENT's container stands for;
+- :STATE :HIGHLIGHTED, when ELEMENT's state is :HIGHLIGHTED.
+Any other state is not carried."
+  (append (when (and (eq :text (element-kind element))
+                     (element-container element)
+                     (element-text element))
+            (list :label (element-text element)))
+          (when container-spec-id
+            (list :container-spec-id container-spec-id))
+          (when (eq :highlighted (element-state element))
+            (list :state :highlighted))))
+
+(defun contrast-finding (element spec-id view ratio threshold category &optional container-spec-id)
   "Return the :CONTRAST error for ELEMENT in VIEW, whose ink against its background has RATIO,
-below THRESHOLD for CATEGORY. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL."
+below THRESHOLD for CATEGORY. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL.
+CONTAINER-SPEC-ID is the id of the spec element ELEMENT's container stands for, or NIL. The
+detail ends with the facts MARK-FACTS returns."
   (make-finding :check :contrast
                 :severity :error
                 :spec-id spec-id
@@ -307,17 +325,20 @@ below THRESHOLD for CATEGORY. SPEC-ID is the id of the spec element ELEMENT stan
                 :expected threshold
                 :measured ratio
                 :evidence (list :recorded)
-                :detail (list :ratio ratio
-                              :threshold threshold
-                              :ink (rgb-to-hex (element-ink element))
-                              :background (rgb-to-hex (element-background element))
-                              :category category
-                              :kind (element-kind element))))
+                :detail (append (list :ratio ratio
+                                      :threshold threshold
+                                      :ink (rgb-to-hex (element-ink element))
+                                      :background (rgb-to-hex (element-background element))
+                                      :category category
+                                      :kind (element-kind element))
+                                (mark-facts element container-spec-id))))
 
-(defun unresolved-ink-finding (element spec-id view category)
+(defun unresolved-ink-finding (element spec-id view category &optional container-spec-id)
   "Return the :UNRESOLVED-INK warning for ELEMENT in VIEW, whose ink or background has no fixed
-colour. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL.
-The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing."
+colour. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL. CONTAINER-SPEC-ID is
+the id of the spec element ELEMENT's container stands for, or NIL.
+The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing, and the detail ends
+with the facts MARK-FACTS returns."
   (make-finding :check :unresolved-ink
                 :severity :warning
                 :spec-id spec-id
@@ -328,26 +349,30 @@ The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing."
                 :expected nil
                 :measured nil
                 :evidence (list :recorded)
-                :detail (list :unresolved (append (unless (element-ink element) (list :ink))
-                                                  (unless (element-background element)
-                                                    (list :background)))
-                              :category category
-                              :kind (element-kind element))))
+                :detail (append (list :unresolved (append (unless (element-ink element)
+                                                            (list :ink))
+                                                          (unless (element-background element)
+                                                            (list :background)))
+                                      :category category
+                                      :kind (element-kind element))
+                                (mark-facts element container-spec-id))))
 
-(defun perceivability-finding (element spec-id view thresholds)
+(defun perceivability-finding (element spec-id view thresholds &optional container-spec-id)
   "Return the finding ELEMENT in VIEW earns for contrast, or NIL when it earns none.
 THRESHOLDS is a resolved plist (:TEXT text :NON-TEXT non-text). A :TEXT or :OUTLINE mark whose
 ink against its background is strictly below its category's threshold earns a :CONTRAST error;
 one with no fixed ink or background earns an :UNRESOLVED-INK warning. The ratio is not rounded.
-SPEC-ID is the id of the spec element ELEMENT stands for, or NIL."
+SPEC-ID is the id of the spec element ELEMENT stands for, or NIL. CONTAINER-SPEC-ID is the id of
+the spec element ELEMENT's container stands for, or NIL."
   (let ((category (contrast-category element)))
     (when category
       (if (and (element-ink element) (element-background element))
           (let ((ratio (contrast-ratio (element-ink element) (element-background element)))
                 (threshold (getf thresholds category)))
             (when (below-threshold-p ratio threshold)
-              (contrast-finding element spec-id view ratio threshold category)))
-          (unresolved-ink-finding element spec-id view category)))))
+              (contrast-finding element spec-id view ratio threshold category
+                                container-spec-id)))
+          (unresolved-ink-finding element spec-id view category container-spec-id)))))
 
 (defun compare-snapshot (snapshot spec &key thresholds on-examine on-finding)
   "Judge SNAPSHOT against SPEC and return the findings in the order made.
@@ -362,7 +387,9 @@ Order is judged next: each :ORDER group whose drawn members sit out of the expec
 along its axis gives one :ORDER error, judged on drawn position and never on painting order.
 Perceivability is judged over every element, in painting order: a :TEXT or :OUTLINE mark below
 its contrast threshold is a :CONTRAST error, and one with no fixed ink or background is an
-:UNRESOLVED-INK warning. Fills and toolkit kinds are not judged for contrast.
+:UNRESOLVED-INK warning. Fills and toolkit kinds are not judged for contrast. The detail of such
+a finding also carries the mark's text as :LABEL for a :TEXT mark inside a control, the spec id
+the control stands for as :CONTAINER-SPEC-ID, and :STATE :HIGHLIGHTED for a highlight-only mark.
 THRESHOLDS is a plist (:TEXT r :NON-TEXT r); each key it sets overrides the spec's :CONTRAST
 clause, which overrides *DEFAULT-CONTRAST-THRESHOLDS*.
 ON-EXAMINE, when non-NIL, is called with each element of SNAPSHOT in painting order, before its
@@ -379,7 +406,12 @@ ON-FINDING, when non-NIL, is called with each finding as it is made."
     (flet ((emit (finding)
              (when on-finding
                (funcall on-finding finding))
-             (push finding findings)))
+             (push finding findings))
+           (container-spec-id (element)
+             (let ((container (element-container element)))
+               (and container
+                    (cdr (find container stood-for
+                               :key (lambda (entry) (element-id (car entry)))))))))
       (multiple-value-bind (pairs unpaired)
           (pair-elements spec-elements (remove-if #'element-container elements))
         (loop for (spec-element . element) in pairs
@@ -406,7 +438,8 @@ ON-FINDING, when non-NIL, is called with each finding as it is made."
         (let ((finding (perceivability-finding element
                                                (cdr (assoc element stood-for :test #'eq))
                                                view
-                                               thresholds)))
+                                               thresholds
+                                               (container-spec-id element))))
           (when finding
             (emit finding)))))
     (nreverse findings)))
