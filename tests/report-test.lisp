@@ -102,3 +102,32 @@ The line names the element, its box, and the view, with the container's id when 
                              "  warning unexpected #9 (session-pill) at (600 8 664 30) "
                              "in header #3: drawn \"50~ off\", not in the spec")
         (format-finding nested nil))))
+
+(define-test contrast-and-unresolved-ink-lines
+  "A :CONTRAST error reports its ratio and threshold to two decimals and both colours; an
+:UNRESOLVED-INK warning says which colour is not fixed."
+  (let ((contrast (make-finding :check :contrast
+                                :severity :error
+                                :view :header
+                                :element-id 12
+                                :box (list 299 9 381 41)
+                                :expected 3.0
+                                :measured 1.662
+                                :detail (list :ratio 1.662 :threshold 3.0
+                                              :ink "#000000" :background "#333333"
+                                              :category :non-text :kind :outline)))
+        (unresolved (make-finding :check :unresolved-ink
+                                  :severity :warning
+                                  :view :header
+                                  :element-id 12
+                                  :box (list 299 9 381 41)
+                                  :detail (list :unresolved (list :ink)
+                                                :category :non-text :kind :outline))))
+    (is string= (concatenate 'string
+                             "  error contrast #12 (outline) at (299 9 381 41) in header: "
+                             "1.66 below 3.00 (ink #000000 on #333333)")
+        (format-finding contrast nil))
+    (is string= (concatenate 'string
+                             "  warning unresolved-ink #12 (outline) at (299 9 381 41) in header: "
+                             "ink has no fixed colour")
+        (format-finding unresolved nil))))

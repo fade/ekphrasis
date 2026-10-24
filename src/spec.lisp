@@ -63,7 +63,7 @@ STATE is the expected state, or NIL; STATES lists the states it may be in, or NI
   (state nil)
   (states nil))
 
-(defparameter *spec-keys* '(:view :elements)
+(defparameter *spec-keys* '(:view :elements :contrast)
   "The top-level keys a spec may hold.")
 
 (defparameter *element-keys* '(:kind :label)
@@ -132,14 +132,35 @@ element with no text. Signal MALFORMED-SPEC naming CLAUSE when it is not well fo
           (malformed clause "element :label must be a string"))
         (make-spec-element :id id :kind kind :label label)))))
 
+(defparameter *contrast-keys* '(:text :non-text)
+  "The keys a :CONTRAST clause may hold.")
+
+(defun parse-contrast-clause (clause)
+  "Validate the value of a spec's :CONTRAST key and return it.
+CLAUSE is a plist whose keys are :TEXT and :NON-TEXT, each at most once, and whose values are
+positive reals; NIL sets no threshold. Signal MALFORMED-SPEC naming CLAUSE when it is not."
+  (unless (plist-shaped-p clause)
+    (malformed clause "spec :contrast must be a plist of even length"))
+  (multiple-value-bind (key problem) (first-bad-key clause *contrast-keys*)
+    (case problem
+      (:unknown (malformed clause (format nil "unknown contrast key ~S" key)))
+      (:repeated (malformed clause (format nil "contrast key ~S appears twice" key)))))
+  (loop for (key value) on clause by #'cddr
+        unless (and (realp value) (plusp value))
+          do (malformed clause (format nil "contrast ~S must be a positive real" key)))
+  clause)
+
 (defun parse-spec (form)
   "Return the spec FORM describes, as a spec record.
-FORM is a spec record, returned unchanged, or a plist (:view keyword :elements (clause ...)).
-:ELEMENTS is a non-empty proper list of element clauses with distinct ids.
+FORM is a spec record, returned unchanged, or a plist (:view keyword :elements (clause ...)),
+optionally with :contrast (:text r :non-text r).
+:ELEMENTS is a non-empty proper list of element clauses with distinct ids. :CONTRAST sets
+positive real thresholds for either key.
 Signal MALFORMED-SPEC naming the offending clause when FORM is not well formed: the whole form
 for a top-level key that is absent, unknown, or repeated, or a :VIEW that is not a keyword; the
-:ELEMENTS value when it is not a proper list; the element clause at fault otherwise, the later
-one for a repeated id. A circular list signals rather than looping.
+:ELEMENTS value when it is not a proper list; the :CONTRAST value when it is malformed; the
+element clause at fault otherwise, the later one for a repeated id. A circular list signals
+rather than looping.
 Never evaluates or reads any part of FORM."
   (when (spec-p form)
     (return-from parse-spec form))
@@ -168,4 +189,6 @@ Never evaluates or reads any part of FORM."
               (malformed clause (format nil "element id ~S is used twice"
                                         (spec-element-id element))))
             (push element parsed)))
-        (make-spec :view view :elements (nreverse parsed))))))
+        (make-spec :view view
+                   :elements (nreverse parsed)
+                   :contrast (parse-contrast-clause (clause-value form :contrast)))))))

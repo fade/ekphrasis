@@ -15,6 +15,7 @@
                 #:malformed-spec-clause
                 #:malformed-spec-reason
                 #:parse-spec
+                #:spec-contrast
                 #:spec-elements
                 #:spec-element-id
                 #:spec-element-kind
@@ -114,3 +115,29 @@ WHAT describes the case for the failure text."
     (true condition)
     (true (search (prin1-to-string clause) text) "~A" text)
     (true (search (malformed-spec-reason condition) text) "~A" text)))
+
+(define-test contrast-clause-parses
+  "A :CONTRAST clause is kept as the spec's contrast; a spec without one has none."
+  (is equal '(:text 3.0)
+      (spec-contrast (parse-spec (list :view :header
+                                       :elements (list (title-clause))
+                                       :contrast (list :text 3.0)))))
+  (is equal '(:text 4.0 :non-text 2.5)
+      (spec-contrast (parse-spec (list :view :header
+                                       :elements (list (title-clause))
+                                       :contrast (list :text 4.0 :non-text 2.5)))))
+  (false (spec-contrast (parse-spec (header-spec (title-clause))))))
+
+(define-test malformed-contrast-is-named
+  "Each malformed :CONTRAST value is named by the condition: an unknown key, a threshold that is
+zero, negative, or not a real, an odd plist, a repeated key, and a value that is not a list."
+  (dolist (entry (list (list "unknown key :large" (list :large 3.0))
+                       (list "zero threshold" (list :text 0))
+                       (list "negative threshold" (list :text -1))
+                       (list "string threshold" (list :text "4.5"))
+                       (list "key with no value" (list :text))
+                       (list "repeated key" (list :text 4.5 :text 3.0))
+                       (list "not a list" "4.5")))
+    (destructuring-bind (what clause) entry
+      (names-clause (list :view :header :elements (list (title-clause)) :contrast clause)
+                    clause what))))

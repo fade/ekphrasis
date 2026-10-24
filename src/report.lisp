@@ -71,6 +71,13 @@ Return the string written when STREAM is NIL, otherwise NIL."
                             (and (finding-element-id finding)
                                  (format nil "#~D" (finding-element-id finding)))))))
 
+(defun unresolved-text (unresolved)
+  "Return what UNRESOLVED, a list of :INK and :BACKGROUND, says has no fixed colour:
+\"ink has no fixed colour\", or \"ink and background have no fixed colour\"."
+  (format nil "~{~A~^ and ~} ~:[has~;have~] no fixed colour"
+          (mapcar #'name-text unresolved)
+          (rest unresolved)))
+
 (defun write-finding-text (finding out)
   "Write the check-specific text of FINDING to OUT."
   (let ((*print-pretty* nil)
@@ -98,6 +105,23 @@ Return the string written when STREAM is NIL, otherwise NIL."
                (box-text (finding-box finding))
                (where-text finding)
                (quoted-text (finding-measured finding))))
+      (:contrast
+       (format out "~A (~A)~A in ~A: ~,2F below ~,2F (ink ~A on ~A)"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (getf (finding-detail finding) :ratio)
+               (getf (finding-detail finding) :threshold)
+               (getf (finding-detail finding) :ink)
+               (getf (finding-detail finding) :background)))
+      (:unresolved-ink
+       (format out "~A (~A)~A in ~A: ~A"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (unresolved-text (getf (finding-detail finding) :unresolved '(:ink)))))
       (t
        (format out "~A in ~A: expected ~S, measured ~S"
                (if (finding-spec-id finding) (keyword-text (finding-spec-id finding)) "element")
