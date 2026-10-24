@@ -36,7 +36,13 @@
            #:finding-measured
            #:finding-evidence
            #:finding-detail
-           #:failing-findings))
+           #:failing-findings
+           #:element-to-plist
+           #:plist-to-element
+           #:finding-to-plist
+           #:plist-to-finding
+           #:finding-where
+           #:finding-why))
 
 (in-package #:ekphrasis/src/model)
 
@@ -90,3 +96,57 @@ DETAIL is a plist of check-specific facts."
 (defun failing-findings (findings)
   "Return the findings in FINDINGS whose severity is :ERROR, in their original order."
   (remove-if-not (lambda (finding) (eq (finding-severity finding) :error)) findings))
+
+(defun element-to-plist (element)
+  "Return ELEMENT as a plist with one keyword key per slot, values as stored.
+Keys, in order: :ID :KIND :TEXT :BOX :CONTAINER :STATE :INK :BACKGROUND :EVIDENCE."
+  (list :id (element-id element)
+        :kind (element-kind element)
+        :text (element-text element)
+        :box (element-box element)
+        :container (element-container element)
+        :state (element-state element)
+        :ink (element-ink element)
+        :background (element-background element)
+        :evidence (element-evidence element)))
+
+(defun plist-to-element (plist)
+  "Return the element PLIST describes, as ELEMENT-TO-PLIST writes it.
+An absent key takes the slot's default; an unknown key signals an error."
+  (apply #'make-element plist))
+
+(defun finding-to-plist (finding)
+  "Return FINDING as a plist with one keyword key per slot, values as stored.
+Keys, in order: :CHECK :SEVERITY :SPEC-ID :VIEW :CONTAINER :ELEMENT-ID :BOX :EXPECTED :MEASURED
+:EVIDENCE :DETAIL."
+  (list :check (finding-check finding)
+        :severity (finding-severity finding)
+        :spec-id (finding-spec-id finding)
+        :view (finding-view finding)
+        :container (finding-container finding)
+        :element-id (finding-element-id finding)
+        :box (finding-box finding)
+        :expected (finding-expected finding)
+        :measured (finding-measured finding)
+        :evidence (finding-evidence finding)
+        :detail (finding-detail finding)))
+
+(defun plist-to-finding (plist)
+  "Return the finding PLIST describes, as FINDING-TO-PLIST writes it.
+An absent key takes the slot's default; an unknown key signals an error."
+  (apply #'make-finding plist))
+
+(defun finding-where (finding)
+  "Return where FINDING is, as the plist (:VIEW view :CONTAINER id :ELEMENT-ID id :BOX box)."
+  (list :view (finding-view finding)
+        :container (finding-container finding)
+        :element-id (finding-element-id finding)
+        :box (finding-box finding)))
+
+(defun finding-why (finding)
+  "Return why FINDING was made, as the plist
+(:CHECK check :EXPECTED expected :MEASURED measured :EVIDENCE evidence)."
+  (list :check (finding-check finding)
+        :expected (finding-expected finding)
+        :measured (finding-measured finding)
+        :evidence (finding-evidence finding)))

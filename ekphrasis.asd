@@ -14,7 +14,10 @@
   :class :package-inferred-system
   :depends-on ("zebra"
                "ekphrasis"
-               "ekphrasis/tests/main-test")
+               "ekphrasis/tests/main-test"
+               "ekphrasis/tests/model-test"
+               "ekphrasis/tests/run-test"
+               "ekphrasis/tests/report-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
