@@ -39,7 +39,7 @@
                        (malformed-spec-clause condition)
                        (malformed-spec-reason condition)))))
   (:documentation "Signalled by PARSE-SPEC when a spec is not well formed.
-CLAUSE is the offending sub-form itself, or the whole form when a required key is absent.
+CLAUSE is the offending sub-form itself, or the whole form when the fault is at the top level.
 REASON is a string saying what is wrong."))
 
 (defstruct (spec (:copier nil))
@@ -54,13 +54,20 @@ ORDER, STATES, and CONTRAST hold the spec's ordering, state, and contrast clause
 
 (defstruct (spec-element (:copier nil))
   "One element a spec expects.
-ID is a keyword naming it; KIND is the expected element kind; LABEL is the expected text.
+ID is a keyword naming it; KIND is the expected element kind; LABEL is the expected text, or
+NIL for an element with no text.
 STATE is the expected state, or NIL; STATES lists the states it may be in, or NIL."
   (id nil :type (or null keyword))
   (kind nil :type (or null keyword))
   (label nil :type (or null string))
   (state nil)
   (states nil))
+
+(defparameter *spec-keys* '(:view :elements)
+  "The top-level keys a spec may hold.")
+
+(defparameter *element-keys* '(:kind :label)
+  "The keys an element clause may hold after its id.")
 
 (defun malformed (clause reason)
   "Signal MALFORMED-SPEC naming CLAUSE and REASON."
@@ -84,46 +91,81 @@ STATE is the expected state, or NIL; STATES lists the states it may be in, or NI
           do (return (values v t))
         finally (return (values nil nil))))
 
+(defun first-bad-key (plist known)
+  "Return the first key of PLIST that is not in KNOWN or repeats an earlier key, and a second
+value, :UNKNOWN or :REPEATED, saying which. Return NIL when every key is known and distinct.
+PLIST is a proper list of even length."
+  (let ((seen '()))
+    (loop for key in plist by #'cddr
+          do (cond ((not (member key known :test #'eq))
+                    (return (values key :unknown)))
+                   ((member key seen :test #'eq)
+                    (return (values key :repeated)))
+                   (t
+                    (push key seen))))))
+
 (defun parse-element-clause (clause)
-  "Validate one element clause (id :kind kind :label label ...) and return a spec-element."
-  (unless (and (consp clause) (proper-list-p clause))
-    (malformed clause "an element clause must be a proper list"))
+  "Validate one element clause (id :kind kind [:label label]) and return a spec-element.
+ID is a keyword; :KIND is required and a keyword; :LABEL is optional and a string, or NIL for an
+element with no text. Signal MALFORMED-SPEC naming CLAUSE when it is not well formed."
+  (cond ((null clause)
+         (malformed clause "an element clause needs a keyword id"))
+        ((not (and (consp clause) (proper-list-p clause)))
+         (malformed clause "an element clause must be a proper list")))
   (let ((id (first clause))
         (options (rest clause)))
     (unless (keywordp id)
-      (malformed clause "an element clause must start with a keyword id"))
+      (malformed clause "element id must be a keyword"))
     (unless (evenp (length options))
-      (malformed clause "an element clause must hold an even-length plist after its id"))
+      (malformed clause "an element clause must hold a plist of even length after its id"))
+    (multiple-value-bind (key problem) (first-bad-key options *element-keys*)
+      (case problem
+        (:unknown (malformed clause (format nil "unknown element key ~S" key)))
+        (:repeated (malformed clause (format nil "element key ~S appears twice" key)))))
     (multiple-value-bind (kind kind-present) (clause-value options :kind)
       (unless kind-present
         (malformed clause "an element clause needs :kind"))
       (unless (keywordp kind)
-        (malformed kind "an element :kind must be a keyword"))
-      (multiple-value-bind (label label-present) (clause-value options :label)
-        (unless label-present
-          (malformed clause "an element clause needs :label"))
-        (unless (stringp label)
-          (malformed label "an element :label must be a string"))
+        (malformed clause "element :kind must be a keyword"))
+      (let ((label (clause-value options :label)))
+        (unless (or (null label) (stringp label))
+          (malformed clause "element :label must be a string"))
         (make-spec-element :id id :kind kind :label label)))))
 
 (defun parse-spec (form)
   "Return the spec FORM describes, as a spec record.
 FORM is a spec record, returned unchanged, or a plist (:view keyword :elements (clause ...)).
-Signal MALFORMED-SPEC naming the offending clause when FORM is not well formed.
+:ELEMENTS is a non-empty proper list of element clauses with distinct ids.
+Signal MALFORMED-SPEC naming the offending clause when FORM is not well formed: the whole form
+for a top-level key that is absent, unknown, or repeated, or a :VIEW that is not a keyword; the
+:ELEMENTS value when it is not a proper list; the element clause at fault otherwise, the later
+one for a repeated id. A circular list signals rather than looping.
 Never evaluates or reads any part of FORM."
   (when (spec-p form)
     (return-from parse-spec form))
   (unless (plist-shaped-p form)
     (malformed form "a spec must be a proper list of even length"))
+  (multiple-value-bind (key problem) (first-bad-key form *spec-keys*)
+    (case problem
+      (:unknown (malformed form (format nil "unknown spec key ~S" key)))
+      (:repeated (malformed form (format nil "spec key ~S appears twice" key)))))
   (multiple-value-bind (view view-present) (clause-value form :view)
     (unless view-present
       (malformed form "a spec needs :view"))
     (unless (keywordp view)
-      (malformed view "a spec :view must be a keyword"))
+      (malformed form "spec :view must be a keyword"))
     (multiple-value-bind (elements elements-present) (clause-value form :elements)
       (unless elements-present
         (malformed form "a spec needs :elements"))
-      (unless (proper-list-p elements)
-        (malformed elements "a spec :elements must be a proper list"))
-      (make-spec :view view
-                 :elements (mapcar #'parse-element-clause elements)))))
+      (when (null elements)
+        (malformed form "spec :elements must name at least one element"))
+      (unless (and (consp elements) (proper-list-p elements))
+        (malformed elements "spec :elements must be a proper list"))
+      (let ((parsed '()))
+        (dolist (clause elements)
+          (let ((element (parse-element-clause clause)))
+            (when (find (spec-element-id element) parsed :key #'spec-element-id)
+              (malformed clause (format nil "element id ~S is used twice"
+                                        (spec-element-id element))))
+            (push element parsed)))
+        (make-spec :view view :elements (nreverse parsed))))))

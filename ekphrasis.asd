@@ -17,7 +17,8 @@
                "ekphrasis/tests/main-test"
                "ekphrasis/tests/model-test"
                "ekphrasis/tests/run-test"
-               "ekphrasis/tests/report-test")
+               "ekphrasis/tests/report-test"
+               "ekphrasis/tests/spec-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
