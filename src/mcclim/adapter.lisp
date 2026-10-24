@@ -114,15 +114,20 @@ all; any other element at its box centre."
 
 (defun rgb-beneath (x y layers background)
   "Return the sRGB list that lies beneath the point (X, Y), or BACKGROUND when no layer covers it.
-LAYERS is a list of (region rgb alpha), most recently drawn first. The first layer whose region
-contains the point gives its RGB, composited over what lies beneath that layer when ALPHA is
-below 1."
+LAYERS is a list of (region rgb alpha), most recently drawn first; a layer with RGB NIL is opaque
+and of no fixed colour. The first layer whose region contains the point decides:
+- with no colour, return NIL, as nothing known lies beneath the point;
+- with ALPHA below 1, return its RGB composited over what lies beneath that layer, or NIL when
+  that is not known;
+- otherwise return its RGB."
   (loop for (layer . below) on layers
         for (region rgb alpha) = layer
         when (region-contains-position-p region x y)
-          return (if (< alpha 1)
-                     (composite-over rgb alpha (rgb-beneath x y below background))
-                     rgb)
+          return (cond ((null rgb) nil)
+                       ((< alpha 1)
+                        (let ((under (rgb-beneath x y below background)))
+                          (and under (composite-over rgb alpha under))))
+                       (t rgb))
         finally (return background)))
 
 (defun ink-over (rgb alpha background)
@@ -136,24 +141,28 @@ An opaque ink is RGB itself; a translucent one over no known background is NIL."
   "Return the ink and background of an element of KIND and BOX drawn in RGB at ALPHA, as two values.
 Each sample point takes what lies beneath it under LAYERS over BACKGROUND, and the ink as it shows
 there; the point with the lowest contrast ratio wins, the first point when no ratio is known.
+When any sample point has nothing known beneath it, the background is NIL and the ink is what
+INK-OVER gives over no background: RGB when opaque, NIL when translucent.
 With RGB NIL, return NIL and what lies beneath the first sample point."
   (let ((points (sample-points kind box)))
     (flet ((beneath (point)
              (rgb-beneath (car point) (cdr point) layers background)))
       (if (null rgb)
           (values nil (beneath (first points)))
-          (let (best-ink best-background best-ratio)
-            (loop for point in points
-                  for firstp = t then nil
-                  for under = (beneath point)
-                  for ink = (ink-over rgb alpha under)
-                  for ratio = (and ink under (contrast-ratio ink under))
-                  when (or firstp
-                           (and ratio (or (null best-ratio) (< ratio best-ratio))))
-                    do (setf best-ink ink
-                             best-background under
-                             best-ratio ratio))
-            (values best-ink best-background))))))
+          (let ((unders (mapcar #'beneath points)))
+            (if (member nil unders)
+                (values (ink-over rgb alpha nil) nil)
+                (let (best-ink best-background best-ratio)
+                  (loop for under in unders
+                        for firstp = t then nil
+                        for ink = (ink-over rgb alpha under)
+                        for ratio = (and ink (contrast-ratio ink under))
+                        when (or firstp
+                                 (and ratio (or (null best-ratio) (< ratio best-ratio))))
+                          do (setf best-ink ink
+                                   best-background under
+                                   best-ratio ratio))
+                  (values best-ink best-background))))))))
 
 (defun fill-region (record kind)
   "Return the region a filled shape RECORD of KIND covers.
@@ -178,7 +187,8 @@ else."
 
 (defun walk-records (history pane &optional (ink-resolver #'resolve-ink) state-function)
   "Return elements for the records under HISTORY, depth first, numbered from 1 in painting order.
-Return as further values the fill layers, most recently drawn first, as RGB-BENEATH takes them;
+Return as further values the fill layers, most recently drawn first, as RGB-BENEATH takes them,
+one for every :FILL and with RGB NIL for a fill of no fixed colour or a pattern;
 PANE's resolved background; and an alist (presentation . element) in painting order.
 A presentation becomes an element of its type, numbered before its descendants, which name it as
 their container; its text joins its text descendants' strings with one space, its ink and
@@ -187,8 +197,9 @@ STATE-FUNCTION, NIL when STATE-FUNCTION is NIL. A text record becomes a :TEXT el
 record becomes a :FILL element when filled, otherwise an :OUTLINE element; a pattern is a :FILL
 with no ink. Other records are descended without an element.
 INK-RESOLVER is called as RESOLVE-INK is, on every record ink and on PANE's background. Each
-element's background is what lies beneath its sample points: the topmost earlier :FILL with a
-resolved ink whose region contains the point, else PANE's background. A translucent ink is
+element's background is what lies beneath its sample points: the topmost earlier :FILL whose
+region contains the point, else PANE's background. A :FILL of no fixed colour hides what lies
+beneath it, so an element with a sample point on one has background NIL. A translucent ink is
 stored composited over that background; an :OUTLINE keeps its lowest-contrast sample."
   (let ((elements '())
         (presentations '())
@@ -233,13 +244,13 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
              (visit-fill (record kind container)
                (emit-drawn record :fill container)
                (multiple-value-bind (rgb alpha) (record-ink record)
-                 (when rgb
-                   (push (list (fill-region record kind) rgb alpha) layers))))
+                 (push (list (fill-region record kind) rgb (if rgb alpha 1)) layers)))
              (visit-shape (record kind container)
                (cond ((eq kind :pattern)
                       (emit record :fill container :ink nil
                             :background (nth-value 1 (sample-element :fill (record-box record)
-                                                                     nil 1 layers background))))
+                                                                     nil 1 layers background)))
+                      (push (list (fill-region record kind) nil 1) layers))
                      ((shape-record-filled-p record)
                       (visit-fill record kind container))
                      (t
