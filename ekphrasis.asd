@@ -53,7 +53,9 @@
   :class :package-inferred-system
   :depends-on ("zebra"
                "ekphrasis/mcclim"
-               "ekphrasis/tests/mcclim/acceptance-test")
+               "ekphrasis/tests/mcclim/acceptance-test"
+               "ekphrasis/tests/mcclim/medium-test"
+               "ekphrasis/tests/mcclim/records-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
