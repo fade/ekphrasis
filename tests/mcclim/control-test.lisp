@@ -15,12 +15,14 @@
                 #:composite-over
                 #:contrast-ratio
                 #:element-background
+                #:element-box
                 #:element-container
                 #:element-id
                 #:element-ink
                 #:element-kind
                 #:element-state
                 #:element-text
+                #:element-to-plist
                 #:failing-findings
                 #:finding-check
                 #:finding-container
@@ -172,6 +174,68 @@ fails; its clean twin none."
                   "~A ink ~S" variant (element-ink title))
             (is eq nil (element-background title) "~A" variant))))))
   (clean-twin-passes))
+
+(defun target-outline (snapshot)
+  "Return SNAPSHOT's top-level :OUTLINE element whose box, rounded, is (300 10 380 40)."
+  (find-if (lambda (element)
+             (and (eq :outline (element-kind element))
+                  (null (element-container element))
+                  (equal '(300 10 380 40) (mapcar #'round (element-box element)))))
+           (snapshot-elements snapshot)))
+
+(define-test hidden-frame-round-a-pattern-is-found
+  "A target box in the page's own colour round a pattern fails where its background is known: it
+yields one :CONTRAST error, 1.00 below 3.00, and no :UNRESOLVED-INK warning. That outline and
+the white one round a pattern take gray20 from their known sample points and are partly
+unresolved; the title over a pattern has no background and is not."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :hidden-frame-round-pattern :render *resting*)
+    (let ((outline (target-outline snapshot)))
+      (true outline "target outline: ~A" report)
+      (is = 1 (length findings) "~A" report)
+      (false (find :unresolved-ink findings :key #'finding-check) "~A" report)
+      (let ((finding (find :contrast findings :key #'finding-check)))
+        (true finding "~A" report)
+        (when finding
+          (is eq :error (finding-severity finding) "~A" report)
+          (is eq :outline (getf (finding-detail finding) :kind) "~A" report)
+          (is eq outline (found-element finding snapshot) "~A" report)
+          (true (< (abs (- (finding-measured finding) 1.0)) 1d-9) "~A" report)
+          (is = 3.0 (finding-expected finding) "~A" report)
+          (is string= "#333333" (getf (finding-detail finding) :ink) "~A" report)
+          (is string= "#333333" (getf (finding-detail finding) :background) "~A" report)))
+      (when outline
+        (let ((background (element-background outline)))
+          (true (and background (rgb-match-p (parse-rgb "#333333") background))
+                "hidden frame background ~S" background))
+        (true (getf (element-to-plist outline) :partly-unresolved)
+              "hidden frame ~S" (element-to-plist outline)))))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :frame-round-pattern :render *resting*)
+    (declare (ignore findings))
+    (let ((outline (target-outline snapshot)))
+      (true outline "target outline: ~A" report)
+      (when outline
+        (let ((ink (element-ink outline))
+              (background (element-background outline)))
+          (true (and ink (rgb-match-p '(1 1 1) ink)) "white frame ink ~S" ink)
+          (true (and background (rgb-match-p (parse-rgb "#333333") background))
+                "white frame background ~S" background))
+        (true (getf (element-to-plist outline) :partly-unresolved)
+              "white frame ~S" (element-to-plist outline)))))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :pattern-fill :render *resting*)
+    (declare (ignore findings))
+    (let ((title (find-if (lambda (element)
+                            (and (eq :text (element-kind element))
+                                 (null (element-container element))
+                                 (equal "EKPHRASIS" (element-text element))))
+                          (snapshot-elements snapshot))))
+      (true title "title: ~A" report)
+      (when title
+        (is eq nil (element-background title) "~S" (element-to-plist title))
+        (is eq nil (getf (element-to-plist title) :partly-unresolved)
+            "~S" (element-to-plist title))))))
 
 (define-test conforming-spec-with-order-and-states-passes
   "The clean header meets the fixture spec's order and states, whether the pills report their

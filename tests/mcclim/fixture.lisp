@@ -79,6 +79,9 @@
 :FLIPPING-OUTLINE draws the target box in the flipping ink.
 :FLIPPING-FILL fills a rectangle beneath the title in the flipping ink.
 :PATTERN-FILL draws a black and white pattern beneath the title.
+:HIDDEN-FRAME-ROUND-PATTERN draws a black and white pattern inside the target box, and the box in
+gray20, the page's own colour.
+:FRAME-ROUND-PATTERN draws a black and white pattern inside the white target box.
 :SWAPPED draws bravo left of alpha.
 :WRONG-STATE has bravo attached, and draws it so.
 :STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.
@@ -128,7 +131,8 @@ shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
       :flipping-outline :single-box-pills :bordered-pills :flipping-fill :pattern-fill
-      :redrawn-label-pills :flipping-highlight-pills :solid-pills :overlay-pills :badge-pills)
+      :redrawn-label-pills :flipping-highlight-pills :solid-pills :overlay-pills :badge-pills
+      :hidden-frame-round-pattern :frame-round-pattern)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -272,7 +276,9 @@ Draw the title, then the session pills from the right edge leftward in reverse v
 8 px apart, then an unfilled target box. The title is in the pane's foreground, white in a
 DARK-INK-FIXTURE-VIEW, and the box in white, except where the variant changes one of those inks.
 Under :FLIPPING-FILL and :PATTERN-FILL a fill from (8, 6) to (200, 40) is drawn first, beneath
-the title."
+the title. Under :HIDDEN-FRAME-ROUND-PATTERN and :FRAME-ROUND-PATTERN a black and white pattern
+from (301, 11) to (379, 39) is drawn after the pills, filling the target box's interior; the
+first draws the box in gray20, the page's own colour."
   (case *fixture-variant*
     (:flipping-fill
      (draw-rectangle* pane 8 6 200 40 :filled t :ink +flipping-ink+))
@@ -295,10 +301,17 @@ the title."
   (let ((right (- (bounding-rectangle-width pane) 16)))
     (dolist (session (reverse (fixture-sessions *fixture-variant*)))
       (setf right (- (draw-session-pill pane session right) 8))))
+  (when (member *fixture-variant* '(:hidden-frame-round-pattern :frame-round-pattern))
+    (let ((indices (make-array '(28 78))))
+      (dotimes (row 28)
+        (dotimes (column 78)
+          (setf (aref indices row column) (mod (+ row column) 2))))
+      (draw-pattern* pane (make-pattern indices (list +black+ +white+)) 301 11)))
   (draw-rectangle* pane 300 10 380 40
                    :filled nil
                    :ink (case *fixture-variant*
                           ((:low-contrast-outline :combined) +black+)
+                          (:hidden-frame-round-pattern +gray20+)
                           (:flipping-outline +flipping-ink+)
                           (t +white+))))
 

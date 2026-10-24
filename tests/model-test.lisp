@@ -63,10 +63,31 @@
 
 (define-test element-carries-every-field
   "An element's plist has one key per field, and a fresh element's evidence is :recorded."
-  (is equal '(:id :kind :text :box :container :state :ink :background :evidence)
+  (is equal '(:id :kind :text :box :container :state :ink :background :partly-unresolved
+              :evidence)
       (plist-keys (element-to-plist (full-element))))
   (is eq :recorded (element-evidence (make-element)))
   (is eq :recorded (getf (element-to-plist (make-element)) :evidence)))
+
+(define-test element-records-partly-unresolved-samples
+  "An element made with :PARTLY-UNRESOLVED T reads back equalp from its plist, which holds
+:PARTLY-UNRESOLVED T; a fresh element's plist holds the key with the value NIL."
+  (let ((element (handler-case
+                     (plist-to-element (list :id 4
+                                             :kind :outline
+                                             :box (list 300 10 380 40)
+                                             :ink (list 1.0 1.0 1.0)
+                                             :background (list 0.2 0.2 0.2)
+                                             :partly-unresolved t))
+                   (error () nil))))
+    (true element "an element is made with :partly-unresolved t")
+    (when element
+      (let ((plist (element-to-plist element)))
+        (true (equalp element (plist-to-element plist)) "~S" plist)
+        (is eq t (getf plist :partly-unresolved) "~S" plist))))
+  (let ((plist (element-to-plist (make-element))))
+    (true (member :partly-unresolved (plist-keys plist)) "~S" plist)
+    (is eq nil (getf plist :partly-unresolved) "~S" plist)))
 
 (define-test finding-plist-round-trip
   "A finding written as a plist and read back is equalp to the original."
