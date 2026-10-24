@@ -18,11 +18,13 @@
                 #:compose-in
                 #:define-application-frame
                 #:define-presentation-type
+                #:draw-pattern*
                 #:draw-polygon*
                 #:draw-rectangle*
                 #:draw-text*
                 #:make-gray-color
                 #:make-opacity
+                #:make-pattern
                 #:make-rgb-color
                 #:make-text-style
                 #:map-over-output-records
@@ -71,6 +73,8 @@
 :LOW-CONTRAST-OUTLINE draws the target box in black.
 :TRANSLUCENT-TITLE draws the title in white at half opacity.
 :FLIPPING-OUTLINE draws the target box in the flipping ink.
+:FLIPPING-FILL fills a rectangle beneath the title in the flipping ink.
+:PATTERN-FILL draws a black and white pattern beneath the title.
 :SWAPPED draws bravo left of alpha.
 :WRONG-STATE has bravo attached, and draws it so.
 :STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.
@@ -110,7 +114,7 @@ attached; :COMBINED shows bravo then alpha, both fenced, and no charlie. Every o
 shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
-      :flipping-outline :single-box-pills :bordered-pills)
+      :flipping-outline :single-box-pills :bordered-pills :flipping-fill :pattern-fill)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -211,7 +215,18 @@ highlight fill. Return the pill's left edge."
   "Draw the header pane of FRAME onto PANE as *FIXTURE-VARIANT* says.
 Draw the title, then the session pills from the right edge leftward in reverse visual order,
 8 px apart, then an unfilled target box. The title is in the pane's foreground, white in a
-DARK-INK-FIXTURE-VIEW, and the box in white, except where the variant changes one of those inks."
+DARK-INK-FIXTURE-VIEW, and the box in white, except where the variant changes one of those inks.
+Under :FLIPPING-FILL and :PATTERN-FILL a fill from (8, 6) to (200, 40) is drawn first, beneath
+the title."
+  (case *fixture-variant*
+    (:flipping-fill
+     (draw-rectangle* pane 8 6 200 40 :filled t :ink +flipping-ink+))
+    (:pattern-fill
+     (let ((indices (make-array '(34 192))))
+       (dotimes (row 34)
+         (dotimes (column 192)
+           (setf (aref indices row column) (mod (+ row column) 2))))
+       (draw-pattern* pane (make-pattern indices (list +black+ +white+)) 8 6))))
   (unless (eq *fixture-variant* :untitled)
     (with-text-style (pane (make-text-style :sans-serif :bold 22))
       (with-drawing-options (pane :ink (case *fixture-variant*

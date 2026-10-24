@@ -13,8 +13,10 @@
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
                 #:contrast-ratio
+                #:element-background
                 #:element-container
                 #:element-id
+                #:element-ink
                 #:element-kind
                 #:element-state
                 #:element-text
@@ -29,6 +31,7 @@
                 #:finding-spec-id
                 #:format-finding
                 #:parse-rgb
+                #:rgb-match-p
                 #:snapshot-elements)
   (:import-from #:ekphrasis/mcclim)
   (:import-from #:ekphrasis/tests/mcclim/fixture
@@ -136,6 +139,31 @@ warning, and nothing that fails; its clean twin none."
     (is eq :warning (finding-severity (first findings)) "~A" report)
     (is eql 44 (finding-element-id (first findings)) "~A" report)
     (is equal '() (failing-findings findings) "~A" report))
+  (clean-twin-passes))
+
+(define-test mark-on-a-fill-of-unknown-colour-is-unresolved
+  "The title drawn over a flipping-ink fill, or over a pattern, has no known background: each
+yields one :UNRESOLVED-INK warning on the title, unresolved in its background, and nothing that
+fails; its clean twin none."
+  (dolist (variant '(:flipping-fill :pattern-fill))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant variant :render *resting*)
+      (is = 1 (length findings) "~A: ~A" variant report)
+      (is equal '() (failing-findings findings) "~A: ~A" variant report)
+      (let ((finding (first findings)))
+        (when finding
+          (is eq :unresolved-ink (finding-check finding) "~A: ~A" variant report)
+          (is eq :warning (finding-severity finding) "~A: ~A" variant report)
+          (is eq :title (finding-spec-id finding) "~A: ~A" variant report)
+          (is equal '(:background) (getf (finding-detail finding) :unresolved)
+              "~A: ~A" variant report)
+          (let ((title (found-element finding snapshot)))
+            (is eq :text (element-kind title) "~A" variant)
+            (is eq nil (element-container title) "~A" variant)
+            (is string= "EKPHRASIS" (element-text title) "~A" variant)
+            (true (rgb-match-p '(1 1 1) (element-ink title))
+                  "~A ink ~S" variant (element-ink title))
+            (is eq nil (element-background title) "~A" variant))))))
   (clean-twin-passes))
 
 (define-test conforming-spec-with-order-and-states-passes
