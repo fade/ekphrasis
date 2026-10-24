@@ -526,6 +526,35 @@ ratio of at least 4.5."
               (true (and ink background (>= (contrast-ratio ink background) 4.5))
                     "~A contrast of ~S on ~S" name ink background))))))))
 
+(define-test inner-fill-stays-above-the-highlight-background
+  "A bordered pill whose highlight redraws its white background and then its badge leaves the
+white label on the badge. The badge pills yield no findings at rest or exercised, and each pill's
+one highlighted text is white on its drawn-state fill."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :badge-pills :render *resting*)
+    (true (null findings) "at rest: ~A" report))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :badge-pills)
+    (true (null findings) "exercised: ~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((texts (remove-if-not (lambda (element)
+                                    (and (eq :text (element-kind element))
+                                         (eq :highlighted (element-state element))
+                                         (eql (element-id pill) (element-container element))))
+                                  (snapshot-elements snapshot))))
+        (is = 1 (length texts) "~A: ~A" (element-text pill) report)
+        (let* ((text (first texts))
+               (ink (and text (element-ink text)))
+               (background (and text (element-background text))))
+          (when text
+            (true (and ink (rgb-match-p '(1 1 1) ink))
+                  "~A ink ~S" (element-text pill) ink)
+            (true (and background
+                       (or (rgb-match-p (parse-rgb "#5C421A") background)
+                           (rgb-match-p (parse-rgb "#802929") background)))
+                  "~A background ~S" (element-text pill) background)))))))
+
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
 fixture spec and return what CHECK-FIXTURE returns."

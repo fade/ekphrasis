@@ -84,6 +84,8 @@
 :STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.
 :SINGLE-BOX-PILLS presents each pill as single-box, so its highlight is one thin frame.
 :BORDERED-PILLS draws each pill as a label in a rounded border with a highlight background.
+:BADGE-PILLS draws each pill as a label on a badge in its drawn-state fill, inside a rounded
+black border whose highlight background is white.
 :SOLID-PILLS draws each pill on one filled rectangle instead of eleven bands.
 :REDRAWN-LABEL-PILLS presents each pill as single-box; its highlight fills the pill in white and
 redraws the label on it in the pill's drawn-state fill.
@@ -126,7 +128,7 @@ shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
       :flipping-outline :single-box-pills :bordered-pills :flipping-fill :pattern-fill
-      :redrawn-label-pills :flipping-highlight-pills :solid-pills :overlay-pills)
+      :redrawn-label-pills :flipping-highlight-pills :solid-pills :overlay-pills :badge-pills)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -201,21 +203,29 @@ gray80 border through its corners, and its white label; under :SOLID-PILLS one f
 from y 8 to 30 replaces the bands. Under :SINGLE-BOX-PILLS, :REDRAWN-LABEL-PILLS,
 :FLIPPING-HIGHLIGHT-PILLS, and :OVERLAY-PILLS the presentation is single-box. Under
 :BORDERED-PILLS the pill is instead its white label inside a rounded border whose background is
-the drawn-state fill and whose highlight background is that state's highlight fill. Return the
-pill's left edge."
+the drawn-state fill and whose highlight background is that state's highlight fill. Under
+:BADGE-PILLS the border's background is black and its highlight background white, and inside it
+the white label sits on a filled badge from (left + 8, 12) to (right - 8, 31) in the drawn-state
+fill. Return the pill's left edge."
   (let* ((label (fixture-session-name session))
          (left (- right (+ (text-size pane label) 24)))
          (state (fixture-session-drawn-state session))
          (single-box (and (member *fixture-variant* '(:single-box-pills :redrawn-label-pills
                                                        :flipping-highlight-pills :overlay-pills))
                           t)))
-    (if (eq *fixture-variant* :bordered-pills)
-        (let ((record (with-output-as-presentation (pane session 'session-pill)
-                        (surrounding-output-with-border
-                            (pane :shape :rounded :move-cursor nil
-                                  :background (state-fill state)
-                                  :highlight-background (state-highlight-fill state))
-                          (draw-text* pane label (+ left 12) 25 :ink +white+)))))
+    (if (member *fixture-variant* '(:bordered-pills :badge-pills))
+        (let* ((badge (eq *fixture-variant* :badge-pills))
+               (record (with-output-as-presentation (pane session 'session-pill)
+                         (surrounding-output-with-border
+                             (pane :shape :rounded :move-cursor nil
+                                   :background (if badge +black+ (state-fill state))
+                                   :highlight-background (if badge
+                                                             +white+
+                                                             (state-highlight-fill state)))
+                           (when badge
+                             (draw-rectangle* pane (+ left 8) 12 (- right 8) 31
+                                              :filled t :ink (state-fill state)))
+                           (draw-text* pane label (+ left 12) 25 :ink +white+)))))
           (bounding-rectangle-min-x record))
         (progn
           (with-output-as-presentation (pane session 'session-pill :single-box single-box)
