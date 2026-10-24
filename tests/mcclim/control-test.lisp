@@ -237,6 +237,30 @@ unresolved; the title over a pattern has no background and is not."
         (is eq nil (getf (element-to-plist title) :partly-unresolved)
             "~S" (element-to-plist title))))))
 
+(define-test frame-passing-round-a-pattern-keeps-the-warning
+  "A white target box round a pattern passes where its background is known and is unknown
+elsewhere: it yields one :UNRESOLVED-INK warning, unresolved in its background and partly
+unresolved, and nothing that fails."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :frame-round-pattern :render *resting*)
+    (let ((outline (target-outline snapshot))
+          (warning (find :unresolved-ink findings :key #'finding-check)))
+      (true outline "target outline: ~A" report)
+      (is = 1 (length findings) "~A" report)
+      (is equal '() (failing-findings findings) "~A" report)
+      (true warning "~A" report)
+      (when warning
+        (is eq :warning (finding-severity warning) "~A" report)
+        (is eql 45 (finding-element-id warning) "~A" report)
+        (is eq outline (found-element warning snapshot) "~A" report)
+        (is equal '(:background) (getf (finding-detail warning) :unresolved) "~A" report)
+        (is eq t (getf (finding-detail warning) :partly-unresolved) "~A" report)
+        (is string= (concatenate 'string
+                                 "  warning unresolved-ink #45 (outline) at (300 10 380 40) "
+                                 "in header: background has no fixed colour at some sample "
+                                 "points")
+            (format-finding warning nil))))))
+
 (define-test conforming-spec-with-order-and-states-passes
   "The clean header meets the fixture spec's order and states, whether the pills report their
 state or the drawing alone shows it."

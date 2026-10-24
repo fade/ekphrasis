@@ -220,6 +220,54 @@ against 3.0."
     (is = 12 (finding-element-id finding))
     (is equal '() (failing-findings findings))))
 
+(define-test partly-unresolved-mark-is-judged-on-its-known-points
+  "A partly unresolved mark is judged on its known points: passing, it gives one :UNRESOLVED-INK
+warning, unresolved in its background and partly unresolved; failing, it gives the :CONTRAST
+error alone."
+  (let* ((white (list 1.0 1.0 1.0))
+         (grey (parse-rgb "#333333"))
+         (snapshot (make-snapshot
+                    :view :header
+                    :elements (list (make-element :id 1 :kind :text :text "EKPHRASIS"
+                                                  :box (list 16 14 133 36)
+                                                  :ink white :background grey)
+                                    (make-element :id 2 :kind :outline
+                                                  :box (list 300 10 380 40)
+                                                  :ink white :background grey
+                                                  :partly-unresolved t)
+                                    (make-element :id 3 :kind :outline
+                                                  :box (list 400 10 480 40)
+                                                  :ink grey :background grey
+                                                  :partly-unresolved t))))
+         (findings (compare-snapshot snapshot
+                                     (list :view :header
+                                           :elements (list (list :title :kind :text
+                                                                 :label "EKPHRASIS")))))
+         (warning (find :unresolved-ink findings :key #'finding-check))
+         (failure (find :contrast findings :key #'finding-check)))
+    (is equal '(:unresolved-ink :contrast) (mapcar #'finding-check findings))
+    (is equal '(2 3) (mapcar #'finding-element-id findings))
+    (true warning "~S" findings)
+    (when warning
+      (is eq :warning (finding-severity warning))
+      (is eql 2 (finding-element-id warning))
+      (is equal '(:background) (getf (finding-detail warning) :unresolved))
+      (is eq t (getf (finding-detail warning) :partly-unresolved))
+      (is string= (concatenate 'string
+                               "  warning unresolved-ink #2 (outline) at (300 10 380 40) "
+                               "in header: background has no fixed colour at some sample points")
+          (format-finding warning nil)))
+    (true failure "~S" findings)
+    (when failure
+      (is eq :error (finding-severity failure))
+      (is eql 3 (finding-element-id failure))
+      (true (< (abs (- 1.0 (finding-measured failure))) 1d-9))
+      (is = 3.0 (finding-expected failure)))
+    (false (find-if (lambda (finding)
+                      (and (eql 3 (finding-element-id finding))
+                           (eq :unresolved-ink (finding-check finding))))
+                    findings))))
+
 (define-test fills-and-controls-are-not-judged-for-contrast
   "A fill and a session pill drawn in their background's own colour give no finding."
   (let ((grey (list 0.2 0.2 0.2)))
