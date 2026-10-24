@@ -380,6 +380,29 @@ one highlighted text, unresolved in its background, and nothing that fails."
         (is = 1 (length (highlighted-texts pill snapshot))
             "flipping ~A: ~A" (element-text pill) report)))))
 
+(define-test highlight-that-leaves-the-label-legible-passes
+  "Exercising the band pills on a black foreground paints the bands beneath each white label
+black and frames the label in 1 px of black: the label stays legible. They yield no findings, and
+each pill's one highlighted text is white on black."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :clean :frame 'dark-ink-fixture-view)
+    (true (null findings) "~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((texts (remove-if-not (lambda (element)
+                                    (and (eq :text (element-kind element))
+                                         (eq :highlighted (element-state element))
+                                         (eql (element-id pill) (element-container element))))
+                                  (snapshot-elements snapshot))))
+        (is = 1 (length texts) "~A: ~A" (element-text pill) report)
+        (let ((text (first texts)))
+          (when text
+            (true (and (element-ink text) (rgb-match-p '(1 1 1) (element-ink text)))
+                  "~A ink ~S" (element-text pill) (element-ink text))
+            (true (and (element-background text)
+                       (rgb-match-p '(0 0 0) (element-background text)))
+                  "~A background ~S" (element-text pill) (element-background text))))))))
+
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
 fixture spec and return what CHECK-FIXTURE returns."
