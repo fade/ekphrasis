@@ -359,7 +359,10 @@ Each entry is (:CLASS class :CHECK check :MARK mark :CONTROL case :TWINS cases).
 finding check the control must yield as an error. MARK is NIL, or (kind state) naming the kind
 and state of the element that finding must name. A case is a plist (:FRAME frame :VARIANT variant
 :RENDER render) of CHECK-FIXTURE arguments. Resting classes are rendered with highlight feedback
-off; the interaction-only classes exercise it."
+off; the interaction-only classes exercise it. The label-hidden class's twins are the highlight
+idioms that leave the label legible: one thin frame, a redrawn bordered background, solid pills
+framed round the label, a label redrawn on the highlight, a translucent veil, and the band pills
+under a black highlight."
   (let ((resting (list :exercise-feedback nil)))
     (flet ((at-rest (variant)
              (list :frame 'fixture-view :variant variant :render resting))
@@ -385,4 +388,7 @@ off; the interaction-only classes exercise it."
                   :twins (list (exercised :single-box-pills)))
             (list :class :highlight-hides-label :check :contrast :mark '(:text :highlighted)
                   :control (exercised :clean)
-                  :twins (list (exercised :single-box-pills) (exercised :bordered-pills)))))))
+                  :twins (list (exercised :single-box-pills) (exercised :bordered-pills)
+                               (exercised :solid-pills) (exercised :redrawn-label-pills)
+                               (exercised :overlay-pills)
+                               (exercised :clean 'dark-ink-fixture-view)))))))

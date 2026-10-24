@@ -219,11 +219,16 @@ no resting battery case prints a highlighted-state or label clause."
           (false (search ", label " report) "~S: ~A" variant report))))))
 
 (defun battery-cases ()
-  "Return every control and clean-twin case of FIXTURE-BATTERY, and the combined case."
+  "Return every control and clean-twin case of FIXTURE-BATTERY, the combined case, and the cases
+whose colours cannot all be known: a fill of no fixed colour, and a pattern, beneath the title at
+rest, and the flipping-ink highlight exercised."
   (append (loop for entry in (fixture-battery)
                 collect (getf entry :control)
                 append (getf entry :twins))
-          (list (list :frame 'fixture-view :variant :combined :render *resting*))))
+          (list (list :frame 'fixture-view :variant :combined :render *resting*)
+                (list :frame 'fixture-view :variant :flipping-fill :render *resting*)
+                (list :frame 'fixture-view :variant :pattern-fill :render *resting*)
+                (list :frame 'fixture-view :variant :flipping-highlight-pills :render '()))))
 
 (define-test battery-findings-identical-headless-and-watched
   "Every battery case finds the same with no observer as with one. The watched run starts with
