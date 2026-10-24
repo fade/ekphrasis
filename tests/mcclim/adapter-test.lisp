@@ -18,6 +18,7 @@
                 #:element-id
                 #:element-ink
                 #:element-kind
+                #:element-state
                 #:element-text
                 #:snapshot-elements)
   (:import-from #:ekphrasis/mcclim)
@@ -234,3 +235,34 @@ Each gray80 pill border takes the pill's fill: gray80 on the fill is a lower rat
         (true (colour-near-p *gray20* (element-background band))
               "~A band ~A background ~S"
               (element-text pill) (element-id band) (element-background band))))))
+
+(define-test client-reported-state-is-recorded
+  "With the fixture's state function each pill, taken from the left, carries its session's state,
+and no other element carries one; with the state function NIL no element does."
+  (flet ((states (render)
+           (mapcar (lambda (element) (list (element-text element) (element-state element)))
+                   (sort (top-level (snapshot-elements
+                                     (render-fixture :variant :clean :render render))
+                                    :session-pill)
+                         #'< :key (lambda (element) (first (element-box element)))))))
+    (is equal '(("alpha" :attached) ("bravo" :fenced) ("charlie" :attached)) (states nil))
+    (is equal '(("alpha" nil) ("bravo" nil) ("charlie" nil))
+        (states (list :state-function nil))))
+  (is equal '(:session-pill :session-pill :session-pill)
+      (mapcar #'element-kind (remove nil (clean-elements) :key #'element-state)))
+  (is equal '() (remove nil (snapshot-elements (render-fixture
+                                                :variant :clean
+                                                :render (list :state-function nil)))
+                        :key #'element-state)))
+
+(define-test state-function-must-return-a-keyword
+  "A state function returning a string signals an error naming the presentation type and the
+value."
+  (let ((render (list :state-function (lambda (session)
+                                        (declare (ignore session))
+                                        "attached"))))
+    (fail (render-fixture :variant :clean :render render) error)
+    (let ((text (handler-case (progn (render-fixture :variant :clean :render render) nil)
+                  (error (condition) (princ-to-string condition)))))
+      (true (and text (search "SESSION-PILL" text)) "~A" text)
+      (true (and text (search "\"attached\"" text)) "~A" text))))

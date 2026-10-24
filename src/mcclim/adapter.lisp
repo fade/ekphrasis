@@ -25,6 +25,7 @@
                 #:opacityp
                 #:pane-background
                 #:pane-foreground
+                #:presentation-object
                 #:presentation-type
                 #:presentation-type-name
                 #:presentationp
@@ -150,13 +151,27 @@ ellipse covers its bounding rectangle."
       (make-polygon* (polygon-record-coordinates record))
       (multiple-value-call #'make-rectangle* (bounding-rectangle* record))))
 
-(defun walk-records (history pane &optional (ink-resolver #'resolve-ink))
+(defun reported-state (state-function presentation)
+  "Return the state STATE-FUNCTION reports for PRESENTATION's object, or NIL.
+STATE-FUNCTION is NIL, which reports nothing, or a function of one argument returning a keyword
+or NIL. Signal an error naming the presentation type and the value when it returns anything
+else."
+  (when state-function
+    (let ((state (funcall state-function (presentation-object presentation))))
+      (unless (or (null state) (keywordp state))
+        (error "The state function returned ~S for a ~S presentation; ~
+                a state is a keyword or NIL."
+               state (presentation-type presentation)))
+      state)))
+
+(defun walk-records (history pane &optional (ink-resolver #'resolve-ink) state-function)
   "Return elements for the records under HISTORY, depth first, numbered from 1 in painting order.
 A presentation becomes an element of its type, numbered before its descendants, which name it as
-their container; its text joins its text descendants' strings with one space, and its ink and
-background are its first text descendant's. A text record becomes a :TEXT element. A shape record
-becomes a :FILL element when filled, otherwise an :OUTLINE element; a pattern is a :FILL with no
-ink. Other records are descended without an element.
+their container; its text joins its text descendants' strings with one space, its ink and
+background are its first text descendant's, and its state is what REPORTED-STATE gives for
+STATE-FUNCTION, NIL when STATE-FUNCTION is NIL. A text record becomes a :TEXT element. A shape
+record becomes a :FILL element when filled, otherwise an :OUTLINE element; a pattern is a :FILL
+with no ink. Other records are descended without an element.
 INK-RESOLVER is called as RESOLVE-INK is, on every record ink and on PANE's background. Each
 element's background is what lies beneath its sample points: the topmost earlier :FILL with a
 resolved ink whose region contains the point, else PANE's background. A translucent ink is
@@ -186,7 +201,8 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
                      (sample-element kind (record-box record) rgb alpha layers background)
                    (apply #'emit record kind container :ink ink :background under initargs))))
              (visit-presentation (record container)
-               (let* ((element (emit record (presentation-kind record) container))
+               (let* ((element (emit record (presentation-kind record) container
+                                     :state (reported-state state-function record)))
                       (before elements)
                       (id (element-id element)))
                  (map-over-output-records (lambda (child) (visit child id)) record)
@@ -229,11 +245,14 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
 
 (defun snapshot-frame-pane (frame-class pane-name
                             &key (width 900) (height 60) frame-initargs
-                              ((:ink-resolver ink-resolver) #'resolve-ink))
+                              ((:ink-resolver ink-resolver) #'resolve-ink)
+                              ((:state-function state-function) nil))
   "Render the pane PANE-NAME of a fresh FRAME-CLASS frame headlessly and return its snapshot.
 The frame is made WIDTH by HEIGHT on a fresh fixed-width port, with FRAME-INITARGS added; its
 display function runs once through a forced redisplay. INK-RESOLVER, called as RESOLVE-INK is,
-gives the colour of every ink the walk meets and of the pane's background. The frame is disowned
+gives the colour of every ink the walk meets and of the pane's background. STATE-FUNCTION, when
+non-NIL, is called with the object of each presentation; its keyword result becomes that
+element's reported state, and any other non-NIL result signals an error. The frame is disowned
 and the port destroyed before returning, whether or not the render succeeds."
   (let* ((port (make-fixed-width-port))
          (frame nil))
@@ -248,7 +267,7 @@ and the port destroyed before returning, whether or not the render succeeds."
              (redisplay-frame-pane made pane :force-p t)
              (make-snapshot :view (intern (string pane-name) :keyword)
                             :elements (walk-records (stream-output-history pane) pane
-                                                    ink-resolver))))
+                                                    ink-resolver state-function))))
       (when frame
         (disown-frame (frame-manager frame) frame))
       (destroy-port port))))

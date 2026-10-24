@@ -58,7 +58,10 @@
 :LOW-CONTRAST-TEXT draws the title in 10% grey.
 :LOW-CONTRAST-OUTLINE draws the target box in black.
 :TRANSLUCENT-TITLE draws the title in white at half opacity.
-:FLIPPING-OUTLINE draws the target box in the flipping ink.")
+:FLIPPING-OUTLINE draws the target box in the flipping ink.
+:SWAPPED draws bravo left of alpha.
+:WRONG-STATE has bravo attached, and draws it so.
+:STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.")
 
 (define-presentation-type session-pill ())
 
@@ -79,8 +82,9 @@ The struct is named apart from the SESSION-PILL presentation type: both would de
 
 (defun fixture-sessions (variant)
   "Return the sessions the header shows for VARIANT, in visual order from left to right.
-:MISSING drops bravo; :RELABELLED names bravo \"brovo\". Every other variant shows alpha
-attached, bravo fenced, and charlie attached."
+:MISSING drops bravo; :RELABELLED names bravo \"brovo\"; :SWAPPED shows bravo first;
+:WRONG-STATE has bravo attached and drawn so; :STATE-DRAWN-WRONGLY has bravo fenced but drawn
+attached. Every other variant shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
       :flipping-outline)
@@ -93,6 +97,18 @@ attached, bravo fenced, and charlie attached."
     (:relabelled
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "brovo" :fenced)
+           (make-fixture-session "charlie" :attached)))
+    (:swapped
+     (list (make-fixture-session "bravo" :fenced)
+           (make-fixture-session "alpha" :attached)
+           (make-fixture-session "charlie" :attached)))
+    (:wrong-state
+     (list (make-fixture-session "alpha" :attached)
+           (make-fixture-session "bravo" :attached)
+           (make-fixture-session "charlie" :attached)))
+    (:state-drawn-wrongly
+     (list (make-fixture-session "alpha" :attached)
+           (make-fixture-session "bravo" :fenced :attached)
            (make-fixture-session "charlie" :attached)))))
 
 (define-application-frame fixture-view ()
@@ -159,25 +175,37 @@ white, except where the variant changes one of those inks."
         :elements (list (list :title :kind :text :label "EKPHRASIS"))))
 
 (defun fixture-spec ()
-  "Return the spec form the clean header conforms to: the title and the three session pills."
+  "Return the spec form the clean header conforms to: the title and the three session pills,
+alpha and charlie attached and bravo fenced, in that order from the left, each state known by
+its pill's fill."
   (list :view :header
         :elements (list (list :title :kind :text :label "EKPHRASIS")
-                        (list :alpha :kind :session-pill :label "alpha")
-                        (list :bravo :kind :session-pill :label "bravo")
-                        (list :charlie :kind :session-pill :label "charlie"))))
+                        (list :alpha :kind :session-pill :label "alpha" :state :attached)
+                        (list :bravo :kind :session-pill :label "bravo" :state :fenced)
+                        (list :charlie :kind :session-pill :label "charlie" :state :attached))
+        :order (list (list :left-to-right :alpha :bravo :charlie))
+        :states (list (list :session-pill
+                            (list :attached :background "#5C421A")
+                            (list :fenced :background "#802929")))))
 
 (defun render-fixture (&key (variant :clean) (frame 'fixture-view) render)
   "Return the snapshot of FRAME's header pane drawn as VARIANT.
-RENDER is a plist of further SNAPSHOT-FRAME-PANE keyword arguments."
+RENDER is a plist of further SNAPSHOT-FRAME-PANE keyword arguments. Each pill reports its
+session's state through FIXTURE-SESSION-STATE unless RENDER gives its own :STATE-FUNCTION,
+NIL included."
   (let ((*fixture-variant* variant))
-    (apply #'snapshot-frame-pane frame 'header :width 900 :height 60 render)))
+    (apply #'snapshot-frame-pane frame 'header :width 900 :height 60
+           (append render (list :state-function #'fixture-session-state)))))
 
 (defun check-fixture (spec &key (variant :clean) (frame 'fixture-view) observers render thresholds)
   "Judge FRAME's header pane drawn as VARIANT against SPEC and return what CHECK-FRAME-PANE returns.
 OBSERVERS and THRESHOLDS are passed to the run; RENDER is a plist of further SNAPSHOT-FRAME-PANE
-arguments."
+arguments. Each pill reports its session's state through FIXTURE-SESSION-STATE unless RENDER
+gives its own :STATE-FUNCTION, NIL included."
   (let ((*fixture-variant* variant))
     (check-frame-pane spec frame 'header
                       :observers observers
                       :thresholds thresholds
-                      :render (append render (list :width 900 :height 60)))))
+                      :render (append render
+                                      (list :width 900 :height 60
+                                            :state-function #'fixture-session-state)))))

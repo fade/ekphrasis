@@ -120,3 +120,64 @@ warning, and nothing that fails; its clean twin none."
     (is eql 44 (finding-element-id (first findings)) "~A" report)
     (is equal '() (failing-findings findings) "~A" report))
   (clean-twin-passes))
+
+(define-test conforming-spec-with-order-and-states-passes
+  "The clean header meets the fixture spec's order and states, whether the pills report their
+state or the drawing alone shows it."
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :clean)
+    (true (null findings) "reported: ~A" report))
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :render (list :state-function nil))
+    (true (null findings) "drawn only: ~A" report)))
+
+(define-test swapped-elements-control
+  "The header drawing bravo left of alpha yields one :ORDER finding for the pill group, with the
+drawn sequence; its clean twin none."
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :swapped)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :order (finding-check finding) "~A" report)
+      (is equal '(:alpha :bravo :charlie) (finding-expected finding) "~A" report)
+      (is equal '(:bravo :alpha :charlie) (finding-measured finding) "~A" report)))
+  (clean-twin-passes))
+
+(define-test wrong-state-control
+  "The header with bravo attached, reported and drawn so, yields one :STATE finding for :BRAVO,
+expected fenced and measured attached; its clean twin none."
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :wrong-state)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :state (finding-check finding) "~A" report)
+      (is eq :bravo (finding-spec-id finding) "~A" report)
+      (is eq :fenced (finding-expected finding) "~A" report)
+      (is eq :attached (finding-measured finding) "~A" report)))
+  (clean-twin-passes))
+
+(define-test state-drawn-wrongly-control
+  "The header with bravo fenced but its pill drawn attached yields one :STATE-APPEARANCE finding
+for :BRAVO, reported fenced and drawn attached; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :state-drawn-wrongly)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :state-appearance (finding-check finding) "~A" report)
+      (is eq :bravo (finding-spec-id finding) "~A" report)
+      (is eq :fenced (getf (finding-detail finding) :reported) "~A" report)
+      (is eq :attached (getf (finding-detail finding) :drawn) "~A" report)))
+  (clean-twin-passes))
+
+(define-test drawn-state-alone-control
+  "With no state reported, the header with bravo drawn attached yields one :STATE finding judged
+from the drawing alone; its clean twin, also unreported, none."
+  (let ((unreported (list :state-function nil)))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :wrong-state :render unreported)
+      (is = 1 (length findings) "~A" report)
+      (let ((finding (first findings)))
+        (is eq :state (finding-check finding) "~A" report)
+        (true (member :reported (finding-detail finding)) "~A" report)
+        (false (getf (finding-detail finding) :reported) "~A" report)
+        (is eq :attached (getf (finding-detail finding) :drawn) "~A" report)))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :clean :render unreported)
+      (true (null findings) "clean twin: ~A" report))))
