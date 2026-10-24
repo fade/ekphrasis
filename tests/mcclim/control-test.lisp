@@ -12,6 +12,7 @@
 (defpackage #:ekphrasis/tests/mcclim/control-test
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
+                #:composite-over
                 #:contrast-ratio
                 #:element-background
                 #:element-container
@@ -493,6 +494,37 @@ same frame round the label, nothing spans its centre, and they yield no findings
     (destructuring-bind (&key name after-overlapping containing &allow-other-keys) covers
       (true (plusp after-overlapping) "solid ~A: no frame drawn round the label" name)
       (is = 0 containing "solid ~A: a fill spans the label's centre" name))))
+
+(define-test translucent-highlight-tints-the-label
+  "Exercising the overlay pills veils each pill, its label included, in white at 15% opacity: the
+veil tints the label and what lies beneath it, and hides neither. They yield no findings, and each
+pill's one highlighted text is white on its drawn-state fill tinted by the veil, at a contrast
+ratio of at least 4.5."
+  (let ((drawn-fills '(("alpha" . "#5C421A") ("bravo" . "#802929") ("charlie" . "#5C421A"))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :overlay-pills)
+      (true (null findings) "~A" report)
+      (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                            :key #'element-kind :test-not #'eq))
+        (let* ((name (element-text pill))
+               (tinted (composite-over '(1 1 1) 0.15
+                                       (parse-rgb (cdr (assoc name drawn-fills :test #'equal)))))
+               (texts (remove-if-not
+                       (lambda (element)
+                         (and (eq :text (element-kind element))
+                              (eq :highlighted (element-state element))
+                              (eql (element-id pill) (element-container element))))
+                       (snapshot-elements snapshot))))
+          (is = 1 (length texts) "~A: ~A" name report)
+          (let* ((text (first texts))
+                 (ink (and text (element-ink text)))
+                 (background (and text (element-background text))))
+            (when text
+              (true (and ink (rgb-match-p '(1 1 1) ink)) "~A ink ~S" name ink)
+              (true (and background (rgb-match-p tinted background))
+                    "~A background ~S, expected ~S" name background tinted)
+              (true (and ink background (>= (contrast-ratio ink background) 4.5))
+                    "~A contrast of ~S on ~S" name ink background))))))))
 
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
