@@ -30,10 +30,12 @@
 (defgeneric observe-run-event (observer event)
   (:documentation "Deliver EVENT to OBSERVER.
 EVENT is a plist whose :EVENT value is one of :VIEW-RENDERING, :ELEMENT-EXAMINED, :FINDING,
-or :RUN-END. Every run that begins ends with exactly one :RUN-END whose :OUTCOME is :COMPLETED
-or :ABORTED; an aborted end counts the :FINDING events already delivered.
-Errors signalled by an observer propagate to the caller of RUN-CHECK, except an error while
-receiving an aborted end, which is discarded so the condition that aborted the run propagates.")
+or :RUN-END. Every attached observer receives exactly one :RUN-END per run that begins, whose
+:OUTCOME is :COMPLETED or :ABORTED; an aborted end counts the :FINDING events already delivered.
+Errors signalled by an observer propagate to the caller of RUN-CHECK, with two exceptions.
+An error while receiving an aborted end is discarded, so the condition that aborted the run
+propagates. An error while receiving the completed end is held until every observer has
+received it; the first one held is then signalled again.")
   (:method ((observer function) event)
     (funcall observer event)))
 
@@ -57,12 +59,14 @@ SPEC is a spec record or spec data. SOURCE is a snapshot or a function of no arg
 returning one. OBSERVERS is a list of objects with an OBSERVE-RUN-EVENT method.
 THRESHOLDS is a plist (:TEXT r :NON-TEXT r) of contrast thresholds passed to COMPARE-SNAPSHOT;
 each key it sets overrides the spec's.
-Every run that begins ends with exactly one :RUN-END event whose :OUTCOME is :COMPLETED or
+Every attached observer receives exactly one :RUN-END event, whose :OUTCOME is :COMPLETED or
 :ABORTED. An aborted end counts the :FINDING events already delivered in :FINDINGS and :ERRORS.
 Return three values: the findings, the report string, and the snapshot.
 Signal MALFORMED-SPEC for a malformed spec, before any event. A condition that aborts the run
-propagates unchanged: an observer error while receiving the aborted end is discarded, and
-observer errors on every other event propagate."
+propagates unchanged: an observer error while receiving the aborted end is discarded.
+The completed end reaches every observer even when some signal on it; the first such error is
+then signalled again, the same condition object. Observer errors on every other event
+propagate at once, and the aborted end follows."
   (let* ((spec (parse-spec spec))
          (view (spec-view spec))
          (*run-observers* (append observers *run-observers*))
@@ -87,11 +91,18 @@ observer errors on every other event propagate."
                                      (push finding delivered)
                                      (notify :event :finding :view view :finding finding))))))
              (setf ended t)
-             (notify :event :run-end
-                     :view view
-                     :outcome :completed
-                     :findings (length findings)
-                     :errors (length (failing-findings findings)))
+             (when *run-observers*
+               (let ((event (list :event :run-end
+                                  :view view
+                                  :outcome :completed
+                                  :findings (length findings)
+                                  :errors (length (failing-findings findings))))
+                     (first-error nil))
+                 (dolist (observer *run-observers*)
+                   (handler-case (observe-run-event observer event)
+                     (error (condition)
+                       (unless first-error (setf first-error condition)))))
+                 (when first-error (error first-error))))
              (values findings (format-report view findings) snapshot)))
       (when (and *run-observers* (not ended))
         (let ((event (list :event :run-end
