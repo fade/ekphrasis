@@ -403,24 +403,32 @@ INK-RESOLVER is called as RESOLVE-INK is."
                         (list (first group) (second group) (reverse (third group))))
                       groups))))
 
+(defun last-drawing-position (label exercised)
+  "Return the position in EXERCISED of the last :TEXT primitive drawing the :TEXT element LABEL:
+LABEL's text over LABEL's box rounded to integers. Return NIL when no primitive draws it."
+  (let ((box (mapcar #'round (element-box label))))
+    (position-if
+     (lambda (primitive)
+       (and (eq :text (getf primitive :shape))
+            (equal (element-text label) (getf primitive :text))
+            (equal box (getf primitive :box))))
+     exercised :from-end t)))
+
 (defun label-on-fill (label fill fill-primitives exercised pane ink-resolver layers-before
                       background)
   "Return the ink and background, as two values, the resting :TEXT element LABEL shows on the
 highlighted :FILL element FILL. FILL-PRIMITIVES are the fill's primitives as
 EXERCISE-FEEDBACK-STATE returns them; EXERCISED is the whole highlighted replay. LAYERS-BEFORE
 is a function of a position in EXERCISED returning the layers drawn before it, as RGB-BENEATH
-takes them, over BACKGROUND. When a fill primitive overlapping LABEL is drawn after LABEL's
-text, the fill covers the glyphs: ink and background are both the fill's ink. Otherwise LABEL's
+takes them, over BACKGROUND. LABEL is judged by its last drawing in EXERCISED, as
+LAST-DRAWING-POSITION finds it. When a fill primitive overlapping LABEL is drawn after that
+drawing, the fill covers the glyphs: ink and background are both the fill's ink. Otherwise that
 text primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the
 layers drawn before it. With no text primitive, LABEL's own ink shows on the fill's ink."
   (let* ((fill-ink (element-ink fill))
          (box (mapcar #'round (element-box label)))
-         (text (find-if (lambda (primitive)
-                          (and (eq :text (getf primitive :shape))
-                               (equal (element-text label) (getf primitive :text))
-                               (equal box (getf primitive :box))))
-                        exercised))
-         (text-position (and text (position text exercised))))
+         (text-position (last-drawing-position label exercised))
+         (text (and text-position (nth text-position exercised))))
     (cond ((and text-position
                 (some (lambda (primitive)
                         (and (> (getf primitive :position) text-position)
@@ -445,7 +453,8 @@ after RESTING's. For each presentation, in order:
   union box: a :FILL when the group's filled primitives cover at least 90% of that box, otherwise
   an :OUTLINE;
 - each resting :TEXT element of the presentation lying within a highlighted :FILL is judged on
-  it again as a :TEXT element, its colours from LABEL-ON-FILL.
+  it again as a :TEXT element, its colours from LABEL-ON-FILL, unless its last drawing is an
+  added text primitive, which already judges it.
 Inks resolve through INK-RESOLVER. A mark at position P of the highlighted replay is sampled, as
 WALK-RECORDS samples, against the layers drawn before it: the added filled primitives whose
 position is below P, most recently drawn first, each a layer over its box, of no fixed colour
@@ -521,7 +530,11 @@ primitive's position, so no group lies beneath itself."
                                                  (box-within-p (element-box label)
                                                                (element-box (car fill))))
                                                fills)))
-                           (when cover
+                           (when (and cover
+                                     (not (member (last-drawing-position label exercised)
+                                                  added
+                                                  :key (lambda (primitive)
+                                                         (getf primitive :position)))))
                              (multiple-value-bind (ink under)
                                  (label-on-fill label (car cover) (cdr cover) exercised
                                                 pane ink-resolver #'layers-before background)
