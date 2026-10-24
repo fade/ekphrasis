@@ -199,6 +199,30 @@ the caller receives the render's error, and the next observer still receives tha
     (is eq :run-end (getf end :event))
     (is eq :aborted (getf end :outcome))))
 
+(define-test every-observer-receives-the-completed-end
+  "Observers that signal while receiving a completed run's end do not stop the others receiving
+it: each of three observers records exactly one :run-end, last, :outcome :completed, and the
+caller receives the first observer's error."
+  (let* ((logs (list (list nil) (list nil) (list nil)))
+         (messages (list "first observer failed" "second observer failed" nil))
+         (observers (mapcar (lambda (log message)
+                              (lambda (event)
+                                (push event (car log))
+                                (when (and message (eq :run-end (getf event :event)))
+                                  (error message))))
+                            logs messages))
+         (condition (condition-of-run (header-spec) (header-snapshot) observers)))
+    (true condition)
+    (is string= "first observer failed" (princ-to-string condition))
+    (dolist (log logs)
+      (let* ((events (reverse (car log)))
+             (end (car (last events))))
+        (is = 1 (count :run-end (event-kinds events)))
+        (is eq :run-end (getf end :event))
+        (is eq :completed (getf end :outcome))
+        (is eql 1 (getf end :findings))
+        (is eql 1 (getf end :errors))))))
+
 (define-test malformed-spec-delivers-no-event
   "A spec that fails to parse signals MALFORMED-SPEC before the run begins: no event is
 delivered, not even a :run-end."
