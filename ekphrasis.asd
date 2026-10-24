@@ -19,7 +19,8 @@
                "ekphrasis/tests/run-test"
                "ekphrasis/tests/report-test"
                "ekphrasis/tests/spec-test"
-               "ekphrasis/tests/compare-test")
+               "ekphrasis/tests/compare-test"
+               "ekphrasis/tests/contrast-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
