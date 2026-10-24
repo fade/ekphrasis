@@ -33,11 +33,17 @@
                 #:parse-rgb
                 #:rgb-match-p
                 #:snapshot-elements)
-  (:import-from #:ekphrasis/mcclim)
+  (:import-from #:clim
+                #:presentation-object)
+  (:import-from #:ekphrasis/mcclim
+                #:exercise-feedback-state)
   (:import-from #:ekphrasis/tests/mcclim/fixture
+                #:call-with-fixture-pane
                 #:check-fixture
                 #:dark-ink-fixture-view
                 #:fixture-battery
+                #:fixture-presentations
+                #:fixture-session-name
                 #:fixture-spec))
 
 (in-package #:ekphrasis/tests/mcclim/control-test)
@@ -236,7 +242,8 @@ from the drawing alone; its clean twin, also unreported, none."
   (find (finding-element-id finding) (snapshot-elements snapshot) :key #'element-id))
 
 (define-test highlight-that-covers-the-label-hides-it
-  "Exercising the default pills, whose highlight paints every band over the label, yields one
+  "Exercising the default pills, whose per-part highlight fills every band beneath the label in
+the label's own white, yields one
 :CONTRAST finding per pill on its label re-judged as highlighted, white on white at 1.0 against
 4.5; the single-box and bordered pills yield none."
   (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
@@ -402,6 +409,90 @@ each pill's one highlighted text is white on black."
             (true (and (element-background text)
                        (rgb-match-p '(0 0 0) (element-background text)))
                   "~A background ~S" (element-text pill) (element-background text))))))))
+
+(defun pill-label-covers (variant)
+  "Render the fixture header drawn as VARIANT, exercise each pill, and return one plist per pill in
+painting order. :NAME is the pill's label. The rest count the pill's added filled primitives
+against the label's last drawing in the highlighted replay:
+:BEFORE-CONTAINING, drawn before it, box containing its centre;
+:AFTER-OVERLAPPING, drawn after it, box overlapping its box;
+:AFTER-CONTAINING, drawn after it, box containing its centre;
+:CONTAINING, drawn anywhere, box containing its centre."
+  (flet ((contains-p (box x y)
+           (destructuring-bind (x1 y1 x2 y2) box
+             (and (<= x1 x x2) (<= y1 y y2))))
+         (overlaps-p (a b)
+           (destructuring-bind (ax1 ay1 ax2 ay2) a
+             (destructuring-bind (bx1 by1 bx2 by2) b
+               (and (< ax1 bx2) (< bx1 ax2) (< ay1 by2) (< by1 ay2))))))
+    (call-with-fixture-pane
+     (lambda (pane)
+       (loop for presentation in (fixture-presentations pane)
+             collect
+             (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
+               (let* ((name (fixture-session-name (presentation-object presentation)))
+                      (at (position-if (lambda (primitive)
+                                         (and (eq :text (getf primitive :shape))
+                                              (equal name (getf primitive :text))))
+                                       exercised :from-end t))
+                      (box (getf (nth at exercised) :box))
+                      (x (/ (+ (first box) (third box)) 2))
+                      (y (/ (+ (second box) (fourth box)) 2))
+                      (filled (remove-if-not (lambda (primitive) (getf primitive :filled))
+                                             added)))
+                 (flet ((counted (drawn test)
+                          (count-if (lambda (primitive)
+                                      (and (funcall drawn (getf primitive :position))
+                                           (funcall test (getf primitive :box))))
+                                    filled)))
+                   (list :name name
+                         :before-containing (counted (lambda (p) (< p at))
+                                                     (lambda (b) (contains-p b x y)))
+                         :after-overlapping (counted (lambda (p) (> p at))
+                                                     (lambda (b) (overlaps-p b box)))
+                         :after-containing (counted (lambda (p) (> p at))
+                                                    (lambda (b) (contains-p b x y)))
+                         :containing (counted (constantly t)
+                                              (lambda (b) (contains-p b x y)))))))))
+     :variant variant)))
+
+(define-test band-highlight-hides-the-label-by-its-colour
+  "The band pill's label is hidden by colour: the per-part highlight fills every band beneath it
+in the label's own white. Exercised, the band pills yield one white-on-white :CONTRAST finding per
+pill, on its highlighted text. Beneath each label's last drawing a band highlight spans the
+label's centre; the frame drawn after it overlaps the label's box, and nothing drawn after it
+spans the centre. The same bands under a black highlight yield no findings. Solid pills carry the
+same frame round the label, nothing spans its centre, and they yield no findings."
+  (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+    (is = 3 (length findings) "~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((own (remove (element-id pill) findings :key #'finding-container :test-not #'eql)))
+        (is = 1 (length own) "~A: ~A" (element-text pill) report)
+        (let* ((finding (first own))
+               (label (and finding (found-element finding snapshot))))
+          (when label
+            (is eq :contrast (finding-check finding) "~A" report)
+            (is eq :text (element-kind label) "~A" report)
+            (is eq :highlighted (element-state label) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :ink) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :background) "~A" report))))))
+  (dolist (covers (pill-label-covers :clean))
+    (destructuring-bind (&key name before-containing after-overlapping after-containing
+                         &allow-other-keys)
+        covers
+      (true (plusp before-containing) "~A: no band highlight beneath the label" name)
+      (true (plusp after-overlapping) "~A: no frame drawn round the label" name)
+      (is = 0 after-containing "~A: a fill drawn over the label's centre" name)))
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :frame 'dark-ink-fixture-view)
+    (true (null findings) "black highlight: ~A" report))
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :solid-pills)
+    (true (null findings) "solid pills: ~A" report))
+  (dolist (covers (pill-label-covers :solid-pills))
+    (destructuring-bind (&key name after-overlapping containing &allow-other-keys) covers
+      (true (plusp after-overlapping) "solid ~A: no frame drawn round the label" name)
+      (is = 0 containing "solid ~A: a fill spans the label's centre" name))))
 
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
