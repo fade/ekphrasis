@@ -371,8 +371,8 @@ and state of the element that finding must name. A case is a plist (:FRAME frame
 :RENDER render) of CHECK-FIXTURE arguments. Resting classes are rendered with highlight feedback
 off; the interaction-only classes exercise it. The label-hidden class's twins are the highlight
 idioms that leave the label legible: one thin frame, a redrawn bordered background, solid pills
-framed round the label, a label redrawn on the highlight, a translucent veil, and the band pills
-under a black highlight."
+framed round the label, a label redrawn on the highlight, a translucent veil, a label on a badge
+inside a redrawn bordered background, and the band pills under a black highlight."
   (let ((resting (list :exercise-feedback nil)))
     (flet ((at-rest (variant)
              (list :frame 'fixture-view :variant variant :render resting))
@@ -400,5 +400,5 @@ under a black highlight."
                   :control (exercised :clean)
                   :twins (list (exercised :single-box-pills) (exercised :bordered-pills)
                                (exercised :solid-pills) (exercised :redrawn-label-pills)
-                               (exercised :overlay-pills)
+                               (exercised :overlay-pills) (exercised :badge-pills)
                                (exercised :clean 'dark-ink-fixture-view)))))))
