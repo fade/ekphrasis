@@ -82,12 +82,14 @@ fenced)\" for a list of allowed states."
         ((listp state) (format nil "one of ~A" (names-text state)))
         (t (name-text state))))
 
-(defun unresolved-text (unresolved)
+(defun unresolved-text (unresolved &optional partly)
   "Return what UNRESOLVED, a list of :INK and :BACKGROUND, says has no fixed colour:
-\"ink has no fixed colour\", or \"ink and background have no fixed colour\"."
-  (format nil "~{~A~^ and ~} ~:[has~;have~] no fixed colour"
+\"ink has no fixed colour\", or \"ink and background have no fixed colour\". With PARTLY true,
+the text ends \" at some sample points\"."
+  (format nil "~{~A~^ and ~} ~:[has~;have~] no fixed colour~:[~; at some sample points~]"
           (mapcar #'name-text unresolved)
-          (rest unresolved)))
+          (rest unresolved)
+          partly))
 
 (defun mark-clauses (detail)
   "Return the clauses a perceivability line ends with for DETAIL, a finding's detail plist:
@@ -176,7 +178,8 @@ Return \"\" when neither clause applies. No other state prints a clause."
                kind
                (box-text (finding-box finding))
                (where-text finding)
-               (unresolved-text (getf (finding-detail finding) :unresolved '(:ink)))
+               (unresolved-text (getf (finding-detail finding) :unresolved '(:ink))
+                                (getf (finding-detail finding) :partly-unresolved))
                (mark-clauses (finding-detail finding))))
       (t
        (format out "~A in ~A: expected ~S, measured ~S"

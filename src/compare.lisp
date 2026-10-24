@@ -12,6 +12,7 @@
                 #:element-id
                 #:element-ink
                 #:element-kind
+                #:element-partly-unresolved
                 #:element-state
                 #:element-text
                 #:make-finding
@@ -335,10 +336,12 @@ detail ends with the facts MARK-FACTS returns."
 
 (defun unresolved-ink-finding (element spec-id view category &optional container-spec-id)
   "Return the :UNRESOLVED-INK warning for ELEMENT in VIEW, whose ink or background has no fixed
-colour. SPEC-ID is the id of the spec element ELEMENT stands for, or NIL. CONTAINER-SPEC-ID is
-the id of the spec element ELEMENT's container stands for, or NIL.
-The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing, and the detail ends
-with the facts MARK-FACTS returns."
+colour, at every sample point or, when ELEMENT is partly unresolved, at some of them. SPEC-ID is
+the id of the spec element ELEMENT stands for, or NIL. CONTAINER-SPEC-ID is the id of the spec
+element ELEMENT's container stands for, or NIL.
+The detail's :UNRESOLVED lists which of :INK and :BACKGROUND is missing; for a partly unresolved
+ELEMENT it is (:BACKGROUND), followed by :PARTLY-UNRESOLVED T. The detail ends with the facts
+MARK-FACTS returns."
   (make-finding :check :unresolved-ink
                 :severity :warning
                 :spec-id spec-id
@@ -349,19 +352,24 @@ with the facts MARK-FACTS returns."
                 :expected nil
                 :measured nil
                 :evidence (list :recorded)
-                :detail (append (list :unresolved (append (unless (element-ink element)
-                                                            (list :ink))
-                                                          (unless (element-background element)
-                                                            (list :background)))
-                                      :category category
+                :detail (append (if (element-partly-unresolved element)
+                                    (list :unresolved (list :background)
+                                          :partly-unresolved t)
+                                    (list :unresolved (append (unless (element-ink element)
+                                                                (list :ink))
+                                                              (unless (element-background element)
+                                                                (list :background)))))
+                                (list :category category
                                       :kind (element-kind element))
                                 (mark-facts element container-spec-id))))
 
 (defun perceivability-finding (element spec-id view thresholds &optional container-spec-id)
   "Return the finding ELEMENT in VIEW earns for contrast, or NIL when it earns none.
 THRESHOLDS is a resolved plist (:TEXT text :NON-TEXT non-text). A :TEXT or :OUTLINE mark whose
-ink against its background is strictly below its category's threshold earns a :CONTRAST error;
-one with no fixed ink or background earns an :UNRESOLVED-INK warning. The ratio is not rounded.
+ink against its background is strictly below its category's threshold earns a :CONTRAST error,
+and only that, partly unresolved or not. A mark at or above it earns an :UNRESOLVED-INK warning
+when it is partly unresolved, and nothing otherwise. A mark with no fixed ink or background earns
+an :UNRESOLVED-INK warning. The ratio is not rounded.
 SPEC-ID is the id of the spec element ELEMENT stands for, or NIL. CONTAINER-SPEC-ID is the id of
 the spec element ELEMENT's container stands for, or NIL."
   (let ((category (contrast-category element)))
@@ -369,9 +377,11 @@ the spec element ELEMENT's container stands for, or NIL."
       (if (and (element-ink element) (element-background element))
           (let ((ratio (contrast-ratio (element-ink element) (element-background element)))
                 (threshold (getf thresholds category)))
-            (when (below-threshold-p ratio threshold)
-              (contrast-finding element spec-id view ratio threshold category
-                                container-spec-id)))
+            (cond ((below-threshold-p ratio threshold)
+                   (contrast-finding element spec-id view ratio threshold category
+                                     container-spec-id))
+                  ((element-partly-unresolved element)
+                   (unresolved-ink-finding element spec-id view category container-spec-id))))
           (unresolved-ink-finding element spec-id view category container-spec-id)))))
 
 (defun compare-snapshot (snapshot spec &key thresholds on-examine on-finding)
@@ -387,7 +397,8 @@ Order is judged next: each :ORDER group whose drawn members sit out of the expec
 along its axis gives one :ORDER error, judged on drawn position and never on painting order.
 Perceivability is judged over every element, in painting order: a :TEXT or :OUTLINE mark below
 its contrast threshold is a :CONTRAST error, and one with no fixed ink or background is an
-:UNRESOLVED-INK warning. Fills and toolkit kinds are not judged for contrast. The detail of such
+:UNRESOLVED-INK warning, as is one that passes on the sample points whose background is known
+while others are unknown. Fills and toolkit kinds are not judged for contrast. The detail of such
 a finding also carries the mark's text as :LABEL for a :TEXT mark inside a control, the spec id
 the control stands for as :CONTAINER-SPEC-ID, and :STATE :HIGHLIGHTED for a highlight-only mark.
 THRESHOLDS is a plist (:TEXT r :NON-TEXT r); each key it sets overrides the spec's :CONTRAST
