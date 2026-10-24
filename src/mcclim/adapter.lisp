@@ -379,12 +379,6 @@ pixel across each dimension of its box, so a 1 px stroke drawn as a thin rectang
     (destructuring-bind (ox1 oy1 ox2 oy2) outer
       (and (>= ix1 (1- ox1)) (>= iy1 (1- oy1)) (<= ix2 (1+ ox2)) (<= iy2 (1+ oy2))))))
 
-(defun boxes-overlap-p (a b)
-  "True when the interiors of the boxes A and B intersect."
-  (destructuring-bind (ax1 ay1 ax2 ay2) a
-    (destructuring-bind (bx1 by1 bx2 by2) b
-      (and (< ax1 bx2) (< bx1 ax2) (< ay1 by2) (< by1 ay2)))))
-
 (defun group-by-ink (primitives pane ink-resolver)
   "Return PRIMITIVES grouped by the colour their ink resolves to, in order of first appearance.
 Each group is a list (rgb alpha primitives); RGB is NIL for an ink with no fixed colour.
@@ -414,33 +408,37 @@ LABEL's text over LABEL's box rounded to integers. Return NIL when no primitive 
             (equal box (getf primitive :box))))
      exercised :from-end t)))
 
-(defun label-on-fill (label fill fill-primitives exercised pane ink-resolver layers-before
-                      background)
+(defun label-on-fill (label fill added exercised pane ink-resolver layers-before background)
   "Return the ink and background, as two values, the resting :TEXT element LABEL shows on the
-highlighted :FILL element FILL. FILL-PRIMITIVES are the fill's primitives as
-EXERCISE-FEEDBACK-STATE returns them; EXERCISED is the whole highlighted replay. LAYERS-BEFORE
-is a function of a position in EXERCISED returning the layers drawn before it, as RGB-BENEATH
-takes them, over BACKGROUND. LABEL is judged by its last drawing in EXERCISED, as
-LAST-DRAWING-POSITION finds it. When a fill primitive overlapping LABEL is drawn after that
-drawing, the fill covers the glyphs: ink and background are both the fill's ink. Otherwise that
-text primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the
-layers drawn before it. With no text primitive, LABEL's own ink shows on the fill's ink."
-  (let* ((fill-ink (element-ink fill))
-         (box (mapcar #'round (element-box label)))
+highlighted :FILL element FILL. ADDED are the added primitives EXERCISE-FEEDBACK-STATE returns;
+EXERCISED is the whole highlighted replay. LAYERS-BEFORE is a function of a position in
+EXERCISED returning the layers drawn before it, as RGB-BENEATH takes them, over BACKGROUND.
+LABEL is judged by its last drawing in EXERCISED, as LAST-DRAWING-POSITION finds it: that text
+primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the layers
+drawn before it. A cover is an added filled primitive drawn after that drawing whose box
+contains the centre of LABEL's box, edges included; a primitive that only overlaps LABEL's box
+covers nothing. Each cover, in drawing order, sets both ink and background to its own colour,
+NIL when its ink has no fixed colour. With no text primitive, LABEL's own ink shows on the
+fill's ink."
+  (let* ((centre (first (sample-points :text (element-box label))))
          (text-position (last-drawing-position label exercised))
          (text (and text-position (nth text-position exercised))))
-    (cond ((and text-position
-                (some (lambda (primitive)
-                        (and (> (getf primitive :position) text-position)
-                             (boxes-overlap-p box (getf primitive :box))))
-                      fill-primitives))
-           (values fill-ink fill-ink))
-          (text
-           (multiple-value-bind (rgb alpha) (funcall ink-resolver (getf text :ink) pane)
-             (sample-element :text (element-box label) rgb (or alpha 1)
-                             (funcall layers-before text-position) background)))
-          (t
-           (values (element-ink label) fill-ink)))))
+    (flet ((covers-label-p (primitive)
+             (and (getf primitive :filled)
+                  (> (getf primitive :position) text-position)
+                  (destructuring-bind (x1 y1 x2 y2) (getf primitive :box)
+                    (and (<= x1 (car centre) x2) (<= y1 (cdr centre) y2))))))
+      (if (null text)
+          (values (element-ink label) (element-ink fill))
+          (multiple-value-bind (ink under)
+              (multiple-value-bind (rgb alpha) (funcall ink-resolver (getf text :ink) pane)
+                (sample-element :text (element-box label) rgb (or alpha 1)
+                                (funcall layers-before text-position) background))
+            (dolist (primitive added (values ink under))
+              (when (covers-label-p primitive)
+                (let ((rgb (funcall ink-resolver (getf primitive :ink) pane)))
+                  (setf ink rgb
+                        under rgb)))))))))
 
 (defun feedback-elements (pane presentations resting layers background ink-resolver)
   "Exercise the highlight of each presentation on PANE and return the elements it adds.
@@ -536,7 +534,7 @@ primitive's position, so no group lies beneath itself."
                                                   :key (lambda (primitive)
                                                          (getf primitive :position)))))
                              (multiple-value-bind (ink under)
-                                 (label-on-fill label (car cover) (cdr cover) exercised
+                                 (label-on-fill label (car cover) added exercised
                                                 pane ink-resolver #'layers-before background)
                                (emit :kind :text :text (element-text label)
                                      :box (element-box label) :container container
