@@ -513,3 +513,34 @@ ids continue after the resting ones."
                    "~A fill ~S" label (element-box (first own)))
              (true (colour-near-p rgb (element-ink (first own)))
                    "~A fill ink ~S" label (element-ink (first own))))))
+
+(define-test highlight-marks-are-sampled-on-the-highlight-fill
+  "A label a single-box highlight redraws on its own fill is judged on that fill: redrawn in the
+pill's drawn-state fill over a white highlight fill, its background is white; redrawn in white
+over a flipping-ink highlight fill, its background is NIL. The redrawn label is the highlighted
+:TEXT of the pill in the redrawing ink."
+  (multiple-value-bind (texts elements) (highlighted-elements :redrawn-label-pills :text)
+    (loop for (label rgb) in (list (list "alpha" *attached-rgb*)
+                                   (list "bravo" *fenced-rgb*)
+                                   (list "charlie" *attached-rgb*))
+          for pill = (pill-named label elements)
+          for redrawn = (remove-if-not (lambda (text)
+                                         (and (eql (element-id pill) (element-container text))
+                                              (colour-near-p rgb (element-ink text))))
+                                       texts)
+          do (true redrawn "~A: no label redrawn in its fill among ~S"
+                   label (mapcar #'element-ink texts))
+             (dolist (text redrawn)
+               (true (colour-near-p *white* (element-background text))
+                     "~A background ~S" label (element-background text)))))
+  (multiple-value-bind (texts elements) (highlighted-elements :flipping-highlight-pills :text)
+    (dolist (label '("alpha" "bravo" "charlie"))
+      (let* ((pill (pill-named label elements))
+             (redrawn (remove-if-not (lambda (text)
+                                       (and (eql (element-id pill) (element-container text))
+                                            (colour-near-p *white* (element-ink text))))
+                                     texts)))
+        (true redrawn "~A: no label redrawn in white among ~S"
+              label (mapcar #'element-ink texts))
+        (dolist (text redrawn)
+          (is eq nil (element-background text) "~A background" label))))))
