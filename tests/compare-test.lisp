@@ -25,6 +25,7 @@
                 #:finding-spec-id
                 #:finding-where
                 #:finding-why
+                #:format-finding
                 #:make-element
                 #:make-snapshot
                 #:make-spec
@@ -246,6 +247,99 @@ container carries no spec id and names its container."
     (false (finding-container (first findings)))
     (false (finding-spec-id (second findings)))
     (is eql 2 (finding-container (second findings)))))
+
+(define-test findings-on-highlighted-marks-carry-state-and-label
+  "A finding on a :HIGHLIGHTED mark inside a paired control carries :STATE :HIGHLIGHTED and the
+control's spec id as :CONTAINER-SPEC-ID in its detail, and a :TEXT mark also its text as :LABEL;
+its spec id stays NIL. A top-level mark carries none of these, and a resting label inside a
+paired control carries :LABEL and :CONTAINER-SPEC-ID but no :STATE."
+  (let* ((white (list 1 1 1))
+         (black (list 0 0 0))
+         (grey (list 0.2 0.2 0.2))
+         (pill-box (list 660 8 724 30))
+         (label-box (list 672 15 712 28))
+         (spec (list :view :header
+                     :elements (list (list :title :kind :text :label "EKPHRASIS")
+                                     (list :alpha :kind :session-pill :label "alpha"))))
+         (findings
+           (compare-snapshot
+            (mark-snapshot
+             (make-element :id 1 :kind :text :text "EKPHRASIS" :box (list 16 14 133 36)
+                           :ink white :background grey)
+             (make-element :id 2 :kind :session-pill :text "alpha" :box pill-box)
+             (make-element :id 3 :kind :text :text "alpha" :container 2 :box label-box
+                           :ink white :background grey)
+             (make-element :id 4 :kind :outline :container 2 :state :highlighted
+                           :box pill-box :ink black :background grey)
+             (make-element :id 5 :kind :text :text "alpha" :container 2 :state :highlighted
+                           :box label-box :ink white :background white)
+             (make-element :id 6 :kind :outline :container 2 :state :highlighted
+                           :box pill-box :ink nil :background grey))
+            spec)))
+    (is equal '(:contrast :contrast :unresolved-ink) (mapcar #'finding-check findings))
+    (is equal '(4 5 6) (mapcar #'finding-element-id findings))
+    (dolist (finding findings)
+      (let ((detail (finding-detail finding)))
+        (is eq :highlighted (getf detail :state))
+        (is eq :alpha (getf detail :container-spec-id))
+        (false (finding-spec-id finding))
+        (is eql 2 (finding-container finding))))
+    (is string= "alpha" (getf (finding-detail (second findings)) :label))
+    (false (member :label (finding-detail (first findings))))
+    (false (member :label (finding-detail (third findings))))
+    (is string= (concatenate 'string
+                             "  error contrast #5 (text) at (672 15 712 28) in header #2: "
+                             "1.00 below 4.50 (ink #FFFFFF on #FFFFFF), "
+                             "label \"alpha\" of :alpha, only when highlighted")
+        (format-finding (second findings) nil)))
+  (let* ((faint (list 0.1 0.1 0.1))
+         (grey (list 0.2 0.2 0.2))
+         (spec (list :view :header
+                     :elements (list (list :title :kind :text :label "EKPHRASIS")
+                                     (list :alpha :kind :session-pill :label "alpha"))))
+         (findings (compare-snapshot
+                    (mark-snapshot (mark :text faint grey :id 1 :text "EKPHRASIS")
+                                   (mark :session-pill nil nil :id 2 :text "alpha")
+                                   (mark :text faint grey :id 3 :text "alpha" :container 2))
+                    spec))
+         (title (finding-detail (first findings)))
+         (label (finding-detail (second findings))))
+    (is equal '(1 3) (mapcar #'finding-element-id findings))
+    (false (member :label title))
+    (false (member :container-spec-id title))
+    (false (member :state title))
+    (is string= "alpha" (getf label :label))
+    (is eq :alpha (getf label :container-spec-id))
+    (false (member :state label))))
+
+(define-test reported-state-mark-line-has-no-state-clause
+  "A faint label inside a paired control with a client-reported :ATTACHED state carries :LABEL
+and :CONTAINER-SPEC-ID but no :STATE in its detail, and its line names the label with no
+\"only when\" clause."
+  (let* ((spec (list :view :header
+                     :elements (list (list :alpha :kind :session-pill :label "alpha"))))
+         (findings
+           (compare-snapshot
+            (mark-snapshot
+             (make-element :id 2 :kind :session-pill :text "alpha" :box (list 660 8 724 30))
+             (make-element :id 3 :kind :text :text "alpha" :container 2 :state :attached
+                           :box (list 672 15 712 28)
+                           :ink (list 0.1 0.1 0.1) :background (list 0.2 0.2 0.2)))
+            spec))
+         (finding (first findings))
+         (detail (finding-detail finding))
+         (line (format-finding finding nil))
+         (clause ", label \"alpha\" of :alpha"))
+    (is = 1 (length findings))
+    (is eq :contrast (finding-check finding))
+    (is = 3 (finding-element-id finding))
+    (is string= "alpha" (getf detail :label))
+    (is eq :alpha (getf detail :container-spec-id))
+    (false (member :state detail))
+    (true (and (>= (length line) (length clause))
+               (string= clause line :start2 (- (length line) (length clause))))
+          "~A" line)
+    (false (search "only when" line) "~A" line)))
 
 (defun ordered-spec (&key (axis :left-to-right) (ids (list :alpha :bravo :charlie)))
   "Return a spec naming the session pills alpha, bravo, and charlie, with one :ORDER group

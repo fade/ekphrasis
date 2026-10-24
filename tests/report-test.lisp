@@ -178,3 +178,72 @@ A missing state reads \"none\"."
                              "in header: expected one of (attached fenced), measured none "
                              "(reported none, drawn none)")
         (format-finding (stated :state (list :attached :fenced) nil nil nil) nil))))
+
+(define-test highlighted-mark-lines-say-so
+  "A :CONTRAST or :UNRESOLVED-INK line ends with the label clause when the detail has :LABEL,
+naming :CONTAINER-SPEC-ID when present, then with \", only when highlighted\" when the detail's
+:STATE is :HIGHLIGHTED. Any other :STATE prints no clause."
+  (flet ((contrast (id container box detail)
+           (make-finding :check :contrast
+                         :severity :error
+                         :view :header
+                         :container container
+                         :element-id id
+                         :box box
+                         :expected (getf detail :threshold)
+                         :measured (getf detail :ratio)
+                         :detail detail)))
+    (let* ((white (list :ink "#FFFFFF" :background "#FFFFFF" :category :text :kind :text))
+           (frame (contrast 45 2 (list 802 8 882 30)
+                            (list :ratio 1.1549d0 :threshold 3.0
+                                  :ink "#000000" :background "#14151D"
+                                  :category :non-text :kind :outline
+                                  :container-spec-id :charlie :state :highlighted)))
+           (label (contrast 46 2 (list 814 15 870 28)
+                            (append (list :ratio 1.0d0 :threshold 4.5) white
+                                    (list :label "charlie" :container-spec-id :charlie
+                                          :state :highlighted))))
+           (unpaired (contrast 9 3 (list 600 15 656 28)
+                               (append (list :ratio 1.0d0 :threshold 4.5) white
+                                       (list :label "50~ off" :state :highlighted))))
+           (unresolved (make-finding :check :unresolved-ink
+                                     :severity :warning
+                                     :view :header
+                                     :container 2
+                                     :element-id 47
+                                     :box (list 802 8 882 30)
+                                     :detail (list :unresolved (list :ink)
+                                                   :category :non-text :kind :outline
+                                                   :container-spec-id :charlie
+                                                   :state :highlighted)))
+           (resting-detail (list :ratio 1.38d0 :threshold 4.5
+                                 :ink "#1A1A1A" :background "#333333"
+                                 :category :text :kind :text
+                                 :label "alpha" :container-spec-id :alpha))
+           (resting (contrast 3 2 (list 672 15 712 28) resting-detail))
+           (reported (contrast 3 2 (list 672 15 712 28)
+                               (append resting-detail (list :state :attached))))
+           (resting-line (concatenate 'string
+                                      "  error contrast #3 (text) at (672 15 712 28) "
+                                      "in header #2: 1.38 below 4.50 (ink #1A1A1A on #333333), "
+                                      "label \"alpha\" of :alpha")))
+      (is string= (concatenate 'string
+                               "  error contrast #45 (outline) at (802 8 882 30) in header #2: "
+                               "1.15 below 3.00 (ink #000000 on #14151D), only when highlighted")
+          (format-finding frame nil))
+      (is string= (concatenate 'string
+                               "  error contrast #46 (text) at (814 15 870 28) in header #2: "
+                               "1.00 below 4.50 (ink #FFFFFF on #FFFFFF), "
+                               "label \"charlie\" of :charlie, only when highlighted")
+          (format-finding label nil))
+      (is string= (concatenate 'string
+                               "  error contrast #9 (text) at (600 15 656 28) in header #3: "
+                               "1.00 below 4.50 (ink #FFFFFF on #FFFFFF), "
+                               "label \"50~ off\", only when highlighted")
+          (format-finding unpaired nil))
+      (is string= (concatenate 'string
+                               "  warning unresolved-ink #47 (outline) at (802 8 882 30) "
+                               "in header #2: ink has no fixed colour, only when highlighted")
+          (format-finding unresolved nil))
+      (is string= resting-line (format-finding resting nil))
+      (is string= resting-line (format-finding reported nil)))))

@@ -27,6 +27,7 @@
                 #:finding-measured
                 #:finding-severity
                 #:finding-spec-id
+                #:format-finding
                 #:parse-rgb
                 #:snapshot-elements)
   (:import-from #:ekphrasis/mcclim)
@@ -259,6 +260,44 @@ the ratio of black on #14151D against 3.0. The same pills on the light-foregroun
           (is = 3.0 (finding-expected finding) "~A" report)))))
   (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :single-box-pills)
     (true (null findings) "clean twin: ~A" report)))
+
+(define-test interaction-only-lines-say-when-and-which-label
+  "Exercised, each label a band pill's highlight hides has a line naming the label's text and its
+pill's spec id and ending \", only when highlighted\"; each invisible frame of the dark-ink pills
+has a line ending the same way with no label clause."
+  (flet ((ends-with-p (suffix line)
+           (and (>= (length line) (length suffix))
+                (string= suffix line :start2 (- (length line) (length suffix))))))
+    (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+      (let ((lines (mapcar (lambda (finding) (format-finding finding nil)) findings))
+            (clauses (getf (fixture-spec) :elements)))
+        (is = 3 (length lines) "~A" report)
+        (is string= (concatenate 'string
+                                 "  error contrast #46 (text) at (814 15 870 28) in header #2: "
+                                 "1.00 below 4.50 (ink #FFFFFF on #FFFFFF), "
+                                 "label \"charlie\" of :charlie, only when highlighted")
+            (first lines))
+        (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                              :key #'element-kind :test-not #'eq))
+          (let* ((text (element-text pill))
+                 (id (car (find text clauses :key (lambda (clause) (getf (cdr clause) :label))
+                                             :test #'equal)))
+                 (finding (find (element-id pill) findings :key #'finding-container))
+                 (line (and finding (format-finding finding nil)))
+                 (suffix (format nil ", label ~S of :~(~A~), only when highlighted" text id)))
+            (true id "no spec element labelled ~S" text)
+            (true (and line (ends-with-p suffix line)) "~A: ~A" text report)))))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view)
+      (let ((lines (mapcar (lambda (finding) (format-finding finding nil)) findings)))
+        (is = 3 (length lines) "~A" report)
+        (is string= (concatenate 'string
+                                 "  error contrast #45 (outline) at (802 8 882 30) in header #2: "
+                                 "1.15 below 3.00 (ink #000000 on #14151D), only when highlighted")
+            (first lines))
+        (dolist (line lines)
+          (true (ends-with-p ", only when highlighted" line) "~A" line)
+          (false (search "label" line) "~A" line))))))
 
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the

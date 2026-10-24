@@ -181,6 +181,43 @@ yields at rest exactly one :MISSING, :ORDER, :STATE, and :CONTRAST finding, and 
       (is eq :outline (getf (finding-detail (one :contrast)) :kind) "~A" report)
       (false (finding-container (one :contrast)) "~A" report))))
 
+(define-test resting-report-lines-are-unchanged
+  "At rest, the combined header's report and the faint title's line read exactly as before, and
+no resting battery case prints a highlighted-state or label clause."
+  (let ((newline (string #\Newline)))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :combined :render *resting*)
+      (declare (ignore findings))
+      (is string= (concatenate 'string
+                               "header: 4 findings (4 errors, 0 warnings)" newline
+                               "  error state :alpha #2 (session-pill) at (818 8 882 30) "
+                               "in header: expected attached, measured fenced "
+                               "(reported fenced, drawn fenced)" newline
+                               "  error missing :charlie (session-pill) in header: "
+                               "expected \"charlie\", none drawn" newline
+                               "  error order left-to-right at (746 8 882 30) in header: "
+                               "expected (alpha bravo), drawn (bravo alpha), displaced (bravo)"
+                               newline
+                               "  error contrast #30 (outline) at (300 10 380 40) in header: "
+                               "1.66 below 3.00 (ink #000000 on #333333)")
+          report)))
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :low-contrast-text :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (is string= (concatenate 'string
+                             "  error contrast :title #1 (text) at (16 14 133 36) in header: "
+                             "1.38 below 4.50 (ink #1A1A1A on #333333)")
+        (format-finding (first findings) nil)))
+  (dolist (case (loop for entry in (fixture-battery)
+                      append (cons (getf entry :control) (getf entry :twins))))
+    (destructuring-bind (&key frame variant render) case
+      (when (equal render *resting*)
+        (multiple-value-bind (findings report)
+            (check-fixture (fixture-spec) :frame frame :variant variant :render render)
+          (declare (ignore findings))
+          (false (search "only when" report) "~S: ~A" variant report)
+          (false (search ", label " report) "~S: ~A" variant report))))))
+
 (defun battery-cases ()
   "Return every control and clean-twin case of FIXTURE-BATTERY, and the combined case."
   (append (loop for entry in (fixture-battery)
