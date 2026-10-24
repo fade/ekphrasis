@@ -1,7 +1,8 @@
 ;;;; tests/mcclim/adapter-test.lisp
 ;;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;;
-;;;; The walker turns every drawn label, control, and shape of the fixture header into an element.
+;;;; The walker turns every drawn label, control, and shape of the fixture header into an element
+;;;; that carries the ink it is drawn in and the colour that lies beneath it.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (let ((pkg (find-package '#:ekphrasis/tests/mcclim/adapter-test)))
@@ -11,6 +12,7 @@
 (defpackage #:ekphrasis/tests/mcclim/adapter-test
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
+                #:element-background
                 #:element-box
                 #:element-container
                 #:element-id
@@ -32,6 +34,9 @@
 
 (defparameter *fenced-rgb* (list (/ #x80 255) (/ #x29 255) (/ #x29 255))
   "The sRGB list of the fixture's fenced fill.")
+
+(defparameter *gray20* '(0.2 0.2 0.2)
+  "The fixture pane's background, gray20.")
 
 (defun colour-near-p (expected actual)
   "True when the sRGB lists EXPECTED and ACTUAL agree within 1/255 on every channel."
@@ -66,6 +71,13 @@
              (and (eq :session-pill (element-kind element))
                   (equal label (element-text element))))
            elements))
+
+(defun title-and-target (variant &optional render)
+  "Return the title and the target box of the fixture header drawn as VARIANT, as two values.
+RENDER is a plist of further SNAPSHOT-FRAME-PANE arguments."
+  (let ((elements (snapshot-elements (render-fixture :variant variant :render render))))
+    (values (first (top-level elements :text))
+            (first (top-level elements :outline)))))
 
 (define-test every-drawn-control-and-shape-is-an-element
   "The view holds the title, three pills, and the target box.
@@ -145,3 +157,80 @@ The pill labels and the target box are white."
              (dolist (band (parts-of pill elements :fill))
                (true (colour-near-p rgb (element-ink band))
                      "~A band ink ~S" label (element-ink band))))))
+
+(define-test label-background-is-the-fill-beneath-it
+  "Each pill and its label sit on the pill's drawn-state fill; the title sits on gray20."
+  (let ((elements (clean-elements)))
+    (loop for (label rgb) in (list (list "alpha" *attached-rgb*)
+                                   (list "bravo" *fenced-rgb*)
+                                   (list "charlie" *attached-rgb*))
+          for pill = (pill-named label elements)
+          for text = (first (parts-of pill elements :text))
+          do (true (colour-near-p rgb (element-background pill))
+                   "~A pill background ~S" label (element-background pill))
+             (true (colour-near-p rgb (element-background text))
+                   "~A label background ~S" label (element-background text)))
+    (let ((title (first (top-level elements :text))))
+      (true (colour-near-p *gray20* (element-background title))
+            "title background ~S" (element-background title)))))
+
+(define-test outline-background-is-the-worst-edge-sample
+  "The white target box sits on gray20.
+Each gray80 pill border takes the pill's fill: gray80 on the fill is a lower ratio than on gray20."
+  (let* ((elements (clean-elements))
+         (target (first (top-level elements :outline))))
+    (true (colour-near-p *gray20* (element-background target))
+          "target background ~S" (element-background target))
+    (true (colour-near-p *white* (element-ink target)) "target ink ~S" (element-ink target))
+    (loop for (label rgb) in (list (list "alpha" *attached-rgb*)
+                                   (list "bravo" *fenced-rgb*)
+                                   (list "charlie" *attached-rgb*))
+          for pill = (pill-named label elements)
+          for border = (first (parts-of pill elements :outline))
+          do (true (colour-near-p '(0.8 0.8 0.8) (element-ink border))
+                   "~A border ink ~S" label (element-ink border))
+             (true (colour-near-p rgb (element-background border))
+                   "~A border background ~S" label (element-background border)))))
+
+(define-test translucent-ink-composites-over-background
+  "White at half opacity over gray20 is stored as 0.6 grey."
+  (let ((title (title-and-target :translucent-title)))
+    (true (colour-near-p '(0.6 0.6 0.6) (element-ink title)) "title ink ~S" (element-ink title))
+    (true (colour-near-p *gray20* (element-background title))
+          "title background ~S" (element-background title))))
+
+(define-test flipping-ink-has-no-colour
+  "A target box drawn in the flipping ink has no ink colour and still sits on gray20."
+  (let ((target (nth-value 1 (title-and-target :flipping-outline))))
+    (false (element-ink target))
+    (true (colour-near-p *gray20* (element-background target))
+          "target background ~S" (element-background target))))
+
+(define-test ink-resolver-is-a-parameter
+  "A caller-supplied resolver that makes every ink black gives the title a black ink."
+  (let ((title (title-and-target :clean
+                                 (list :ink-resolver
+                                       (lambda (ink pane)
+                                         (declare (ignore ink pane))
+                                         (values '(0 0 0) 1))))))
+    (is equal '(0 0 0) (element-ink title))))
+
+(define-test low-contrast-variants-carry-their-colours
+  "The 10% grey title and the black target box keep their inks, each on gray20."
+  (let ((title (title-and-target :low-contrast-text)))
+    (true (colour-near-p '(0.1 0.1 0.1) (element-ink title)) "title ink ~S" (element-ink title))
+    (true (colour-near-p *gray20* (element-background title))
+          "title background ~S" (element-background title)))
+  (let ((target (nth-value 1 (title-and-target :low-contrast-outline))))
+    (true (colour-near-p '(0 0 0) (element-ink target)) "target ink ~S" (element-ink target))
+    (true (colour-near-p *gray20* (element-background target))
+          "target background ~S" (element-background target))))
+
+(define-test fill-elements-sample-earlier-layers-only
+  "Every pill band sits on gray20: the bands do not overlap, and a band never lies beneath itself."
+  (let ((elements (clean-elements)))
+    (dolist (pill (top-level elements :session-pill))
+      (dolist (band (parts-of pill elements :fill))
+        (true (colour-near-p *gray20* (element-background band))
+              "~A band ~A background ~S"
+              (element-text pill) (element-id band) (element-background band))))))

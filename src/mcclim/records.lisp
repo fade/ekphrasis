@@ -14,6 +14,7 @@
            #:shape-record-kind
            #:shape-record-filled-p
            #:polygon-record-coordinates
+           #:uniform-compositum-p
            #:*record-internals*
            #:missing-record-internals))
 
@@ -33,8 +34,9 @@
     (climi::draw-lines-output-record climi::coord-seq)
     (climi::draw-point-output-record)
     (climi::draw-points-output-record climi::coord-seq)
-    (climi::draw-pattern-output-record))
-  "The McCLIM internal classes the walker reads, each followed by the slots it reads.")
+    (climi::draw-pattern-output-record)
+    (climi::uniform-compositum))
+  "The McCLIM internal classes the adapter reads, each followed by the slots it reads.")
 
 (defun text-record-p (record)
   "True when RECORD is an output record of one DRAW-TEXT* call."
@@ -74,6 +76,11 @@ Return NIL for every other record."
 RECORD records rectangles, a polygon, a bezigon, lines, or points; return NIL for any other."
   (when (member (shape-record-kind record) '(:rectangles :polygon :bezigon :lines :points))
     (coerce (slot-value record 'climi::coord-seq) 'list)))
+
+(defun uniform-compositum-p (design)
+  "True when DESIGN is a uniform compositum: one colour at one opacity, as COMPOSE-IN of a colour
+and an opacity returns. McCLIM exports no predicate for the class."
+  (typep design 'climi::uniform-compositum))
 
 (defun missing-record-internals (&optional (internals *record-internals*))
   "Return a list of strings, one per internal class or slot in INTERNALS that this image lacks.

@@ -7,18 +7,25 @@
 (defpackage #:ekphrasis/tests/mcclim/fixture
   (:use #:cl)
   (:import-from #:clim
+                #:+black+
+                #:+flipping-ink+
+                #:+foreground-ink+
                 #:+gray20+
                 #:+gray80+
                 #:+white+
                 #:bounding-rectangle-width
+                #:compose-in
                 #:define-application-frame
                 #:define-presentation-type
                 #:draw-polygon*
                 #:draw-rectangle*
                 #:draw-text*
+                #:make-gray-color
+                #:make-opacity
                 #:make-rgb-color
                 #:make-text-style
                 #:text-size
+                #:with-drawing-options
                 #:with-output-as-presentation
                 #:with-text-style)
   (:import-from #:ekphrasis/mcclim
@@ -44,8 +51,14 @@
 (in-package #:ekphrasis/tests/mcclim/fixture)
 
 (defvar *fixture-variant* :clean
-  "The variant the fixture draws: :CLEAN; :UNTITLED, which omits the title; :MISSING, which omits
-the bravo pill; or :RELABELLED, which labels the bravo pill \"brovo\".")
+  "The variant the fixture draws. Each one differs from :CLEAN in one mark:
+:UNTITLED omits the title.
+:MISSING omits the bravo pill.
+:RELABELLED labels the bravo pill \"brovo\".
+:LOW-CONTRAST-TEXT draws the title in 10% grey.
+:LOW-CONTRAST-OUTLINE draws the target box in black.
+:TRANSLUCENT-TITLE draws the title in white at half opacity.
+:FLIPPING-OUTLINE draws the target box in the flipping ink.")
 
 (define-presentation-type session-pill ())
 
@@ -66,10 +79,11 @@ The struct is named apart from the SESSION-PILL presentation type: both would de
 
 (defun fixture-sessions (variant)
   "Return the sessions the header shows for VARIANT, in visual order from left to right.
-:CLEAN and :UNTITLED show alpha attached, bravo fenced, and charlie attached; :MISSING drops
-bravo; :RELABELLED names bravo \"brovo\"."
+:MISSING drops bravo; :RELABELLED names bravo \"brovo\". Every other variant shows alpha
+attached, bravo fenced, and charlie attached."
   (ecase variant
-    ((:clean :untitled)
+    ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
+      :flipping-outline)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -118,15 +132,26 @@ gray80 border through its corners, and its white label. Return the pill's left e
 (defun display-fixture-view (frame pane)
   "Draw the header pane of FRAME onto PANE as *FIXTURE-VARIANT* says.
 Draw the title, then the session pills from the right edge leftward in reverse visual order,
-8 px apart, then an unfilled white target box."
+8 px apart, then an unfilled target box. The title is in the pane's foreground and the box in
+white, except where the variant changes one of those inks."
   (declare (ignore frame))
   (unless (eq *fixture-variant* :untitled)
     (with-text-style (pane (make-text-style :sans-serif :bold 22))
-      (draw-text* pane "EKPHRASIS" 16 32)))
+      (with-drawing-options (pane :ink (case *fixture-variant*
+                                         (:low-contrast-text (make-gray-color 0.1))
+                                         (:translucent-title
+                                          (compose-in +white+ (make-opacity 0.5)))
+                                         (t +foreground-ink+)))
+        (draw-text* pane "EKPHRASIS" 16 32))))
   (let ((right (- (bounding-rectangle-width pane) 16)))
     (dolist (session (reverse (fixture-sessions *fixture-variant*)))
       (setf right (- (draw-session-pill pane session right) 8))))
-  (draw-rectangle* pane 300 10 380 40 :filled nil :ink +white+))
+  (draw-rectangle* pane 300 10 380 40
+                   :filled nil
+                   :ink (case *fixture-variant*
+                          (:low-contrast-outline +black+)
+                          (:flipping-outline +flipping-ink+)
+                          (t +white+))))
 
 (defun title-spec ()
   "Return the spec form naming the header's title."
