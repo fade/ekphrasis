@@ -13,6 +13,11 @@
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
                 #:contrast-ratio
+                #:element-container
+                #:element-id
+                #:element-kind
+                #:element-state
+                #:element-text
                 #:failing-findings
                 #:finding-check
                 #:finding-container
@@ -22,22 +27,29 @@
                 #:finding-measured
                 #:finding-severity
                 #:finding-spec-id
-                #:parse-rgb)
+                #:parse-rgb
+                #:snapshot-elements)
   (:import-from #:ekphrasis/mcclim)
   (:import-from #:ekphrasis/tests/mcclim/fixture
                 #:check-fixture
+                #:dark-ink-fixture-view
                 #:fixture-spec))
 
 (in-package #:ekphrasis/tests/mcclim/control-test)
 
+(defparameter *resting* (list :exercise-feedback nil)
+  "Render arguments that judge the resting drawing alone, with no highlight feedback exercised.")
+
 (defun clean-twin-passes ()
-  "Assert that the clean fixture yields no findings against the fixture spec."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :clean)
+  "Assert that the clean fixture, at rest, yields no findings against the fixture spec."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :render *resting*)
     (true (null findings) "clean twin: ~A" report)))
 
 (define-test missing-element-control
   "The header without the bravo pill yields one :MISSING finding for :BRAVO; its clean twin none."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :missing)
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :missing :render *resting*)
     (is = 1 (length findings) "~A" report)
     (is eq :missing (finding-check (first findings)) "~A" report)
     (is eq :bravo (finding-spec-id (first findings)) "~A" report))
@@ -45,7 +57,8 @@
 
 (define-test relabelled-element-control
   "The header labelling bravo \"brovo\" yields one :LABEL finding for :BRAVO; its clean twin none."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :relabelled)
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :relabelled :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :label (finding-check finding) "~A" report)
@@ -58,7 +71,7 @@
   "The title drawn in 10% grey on gray20 yields one :CONTRAST finding for :TITLE, with its ratio
 against the text threshold and both colours; its clean twin none."
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :low-contrast-text)
+      (check-fixture (fixture-spec) :variant :low-contrast-text :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :contrast (finding-check finding) "~A" report)
@@ -78,7 +91,7 @@ against the text threshold and both colours; its clean twin none."
   "The target box drawn in black on gray20 yields one :CONTRAST finding on that top-level
 outline, with its ratio against the non-text threshold; its clean twin none."
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :low-contrast-outline)
+      (check-fixture (fixture-spec) :variant :low-contrast-outline :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :contrast (finding-check finding) "~A" report)
@@ -95,25 +108,27 @@ outline, with its ratio against the non-text threshold; its clean twin none."
   "A non-text threshold of 1.5 given to the call clears the black target box; at the default it
 is found."
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :low-contrast-outline
+      (check-fixture (fixture-spec) :variant :low-contrast-outline :render *resting*
                                     :thresholds (list :non-text 1.5))
     (true (null findings) "~A" report))
-  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-outline))))
+  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-outline
+                                                :render *resting*))))
 
 (define-test per-spec-threshold-clears-text-control
   "A spec setting the text threshold to 1.3 clears the faint title, at 1.38 to 1; the fixture
 spec without it finds the title."
   (multiple-value-bind (findings report)
       (check-fixture (append (fixture-spec) (list :contrast (list :text 1.3)))
-                     :variant :low-contrast-text)
+                     :variant :low-contrast-text :render *resting*)
     (true (null findings) "~A" report))
-  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-text))))
+  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-text
+                                                :render *resting*))))
 
 (define-test flipping-ink-is-reported-not-failed
   "The target box drawn in the flipping ink has no fixed colour: it yields one :UNRESOLVED-INK
 warning, and nothing that fails; its clean twin none."
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :flipping-outline)
+      (check-fixture (fixture-spec) :variant :flipping-outline :render *resting*)
     (is = 1 (length findings) "~A" report)
     (is eq :unresolved-ink (finding-check (first findings)) "~A" report)
     (is eq :warning (finding-severity (first findings)) "~A" report)
@@ -124,16 +139,19 @@ warning, and nothing that fails; its clean twin none."
 (define-test conforming-spec-with-order-and-states-passes
   "The clean header meets the fixture spec's order and states, whether the pills report their
 state or the drawing alone shows it."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :clean)
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :render *resting*)
     (true (null findings) "reported: ~A" report))
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :clean :render (list :state-function nil))
+      (check-fixture (fixture-spec) :variant :clean
+                                    :render (list :state-function nil :exercise-feedback nil))
     (true (null findings) "drawn only: ~A" report)))
 
 (define-test swapped-elements-control
   "The header drawing bravo left of alpha yields one :ORDER finding for the pill group, with the
 drawn sequence; its clean twin none."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :swapped)
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :swapped :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :order (finding-check finding) "~A" report)
@@ -144,7 +162,8 @@ drawn sequence; its clean twin none."
 (define-test wrong-state-control
   "The header with bravo attached, reported and drawn so, yields one :STATE finding for :BRAVO,
 expected fenced and measured attached; its clean twin none."
-  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :wrong-state)
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :wrong-state :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :state (finding-check finding) "~A" report)
@@ -157,7 +176,7 @@ expected fenced and measured attached; its clean twin none."
   "The header with bravo fenced but its pill drawn attached yields one :STATE-APPEARANCE finding
 for :BRAVO, reported fenced and drawn attached; its clean twin none."
   (multiple-value-bind (findings report)
-      (check-fixture (fixture-spec) :variant :state-drawn-wrongly)
+      (check-fixture (fixture-spec) :variant :state-drawn-wrongly :render *resting*)
     (is = 1 (length findings) "~A" report)
     (let ((finding (first findings)))
       (is eq :state-appearance (finding-check finding) "~A" report)
@@ -169,7 +188,7 @@ for :BRAVO, reported fenced and drawn attached; its clean twin none."
 (define-test drawn-state-alone-control
   "With no state reported, the header with bravo drawn attached yields one :STATE finding judged
 from the drawing alone; its clean twin, also unreported, none."
-  (let ((unreported (list :state-function nil)))
+  (let ((unreported (list :state-function nil :exercise-feedback nil)))
     (multiple-value-bind (findings report)
         (check-fixture (fixture-spec) :variant :wrong-state :render unreported)
       (is = 1 (length findings) "~A" report)
@@ -181,3 +200,61 @@ from the drawing alone; its clean twin, also unreported, none."
     (multiple-value-bind (findings report)
         (check-fixture (fixture-spec) :variant :clean :render unreported)
       (true (null findings) "clean twin: ~A" report))))
+
+(defun found-element (finding snapshot)
+  "Return the element of SNAPSHOT that FINDING names by id."
+  (find (finding-element-id finding) (snapshot-elements snapshot) :key #'element-id))
+
+(define-test highlight-that-covers-the-label-hides-it
+  "Exercising the default pills, whose highlight paints every band over the label, yields one
+:CONTRAST finding per pill on its label re-judged as highlighted, white on white at 1.0 against
+4.5; the single-box and bordered pills yield none."
+  (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+    (is = 3 (length findings) "~A" report)
+    (let ((pills (remove :session-pill (snapshot-elements snapshot)
+                         :key #'element-kind :test-not #'eq)))
+      (dolist (pill pills)
+        (let ((own (remove-if-not (lambda (finding)
+                                    (eql (element-id pill) (finding-container finding)))
+                                  findings)))
+          (is = 1 (length own) "~A: ~A" (element-text pill) report)
+          (let* ((finding (first own))
+                 (label (found-element finding snapshot)))
+            (is eq :contrast (finding-check finding) "~A" report)
+            (is eq :text (element-kind label) "~A" report)
+            (is eq :highlighted (element-state label) "~A" report)
+            (is eql (element-id pill) (element-container label) "~A" report)
+            (is string= (element-text pill) (element-text label) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :ink) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :background) "~A" report)
+            (true (< (abs (- 1 (finding-measured finding))) 1d-9) "~A" report)
+            (is = 4.5 (finding-expected finding) "~A" report))))))
+  (dolist (variant '(:single-box-pills :bordered-pills))
+    (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant variant)
+      (true (null findings) "~A: ~A" variant report))))
+
+(define-test interaction-only-outline-control
+  "On a black foreground over a near-black page, single-box pills pass at rest; exercised, each
+pill's black highlight frame is a :CONTRAST finding on a highlighted :OUTLINE inside the pill, at
+the ratio of black on #14151D against 3.0. The same pills on the light-foreground frame pass."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view
+                                    :render *resting*)
+    (true (null findings) "at rest: ~A" report))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view)
+    (is = 3 (length findings) "~A" report)
+    (let ((expected (contrast-ratio '(0 0 0) (parse-rgb "#14151D"))))
+      (dolist (finding findings)
+        (let ((frame (found-element finding snapshot)))
+          (is eq :contrast (finding-check finding) "~A" report)
+          (is eq :outline (element-kind frame) "~A" report)
+          (is eq :highlighted (element-state frame) "~A" report)
+          (is eq :session-pill
+              (element-kind (find (element-container frame) (snapshot-elements snapshot)
+                                  :key #'element-id))
+              "~A" report)
+          (true (< (abs (- expected (finding-measured finding))) 0.01) "~A" report)
+          (is = 3.0 (finding-expected finding) "~A" report)))))
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :single-box-pills)
+    (true (null findings) "clean twin: ~A" report)))

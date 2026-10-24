@@ -128,11 +128,12 @@ The caller destroys it with CLIM:DESTROY-PORT when done."
 
 (defvar *drawing-log* nil
   "The collector of drawing primitives a FIXED-WIDTH-MEDIUM records, or NIL when nothing is
-captured. When non-NIL, an adjustable vector with a fill pointer; each drawing call on the medium pushes one
-primitive, a plist (:SHAPE shape :BOX (x1 y1 x2 y2) :FILLED filled :INK ink :TEXT text). SHAPE
-names the call: :POINT, :POINTS, :LINE, :LINES, :POLYGON, :BEZIGON, :RECTANGLE, :RECTANGLES,
-:ELLIPSE, or :TEXT. BOX is in stream coordinates, rounded to integers. FILLED is T or NIL. INK is
-the medium's ink at the call, unresolved. TEXT is the string drawn, NIL for a shape.")
+captured. When non-NIL, an adjustable vector with a fill pointer; each drawing call on the
+medium pushes one primitive, a plist (:SHAPE shape :BOX box :FILLED filled :INK ink :TEXT text).
+SHAPE names the call: :POINT, :POINTS, :LINE, :LINES, :POLYGON, :BEZIGON, :RECTANGLE,
+:RECTANGLES, :ELLIPSE, or :TEXT. BOX is (x1 y1 x2 y2) in stream coordinates, rounded to
+integers. FILLED is T or NIL. INK is the medium's ink at the call, unresolved. TEXT is the string
+drawn, NIL for a shape.")
 
 (defun log-primitive (medium shape box filled &optional text)
   "Push the primitive SHAPE drawn on MEDIUM with BOX (x1 y1 x2 y2) onto *DRAWING-LOG*.

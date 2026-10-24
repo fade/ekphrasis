@@ -15,6 +15,7 @@
                 #:element-background
                 #:element-box
                 #:element-container
+                #:element-evidence
                 #:element-id
                 #:element-ink
                 #:element-kind
@@ -51,6 +52,12 @@
 (defparameter *gray20* '(0.2 0.2 0.2)
   "The fixture pane's background, gray20.")
 
+(defparameter *attached-highlight-rgb* (list (/ #x7A 255) (/ #x5A 255) (/ #x26 255))
+  "The sRGB list of the fixture's attached highlight fill.")
+
+(defparameter *fenced-highlight-rgb* (list (/ #xA0 255) (/ #x3A 255) (/ #x3A 255))
+  "The sRGB list of the fixture's fenced highlight fill.")
+
 (defun colour-near-p (expected actual)
   "True when the sRGB lists EXPECTED and ACTUAL agree within 1/255 on every channel."
   (and (= (length expected) (length actual))
@@ -60,9 +67,10 @@
   "Return ELEMENT's box with every coordinate rounded to an integer."
   (mapcar #'round (element-box element)))
 
-(defun clean-elements ()
-  "Return the elements of the clean fixture header, in painting order."
-  (snapshot-elements (render-fixture :variant :clean)))
+(defun clean-elements (&optional render)
+  "Return the elements of the clean fixture header, in painting order.
+RENDER is a plist of further SNAPSHOT-FRAME-PANE arguments."
+  (snapshot-elements (render-fixture :variant :clean :render render)))
 
 (defun top-level (elements &optional kind)
   "Return the ELEMENTS drawn on the view itself, of KIND when KIND is given."
@@ -95,7 +103,7 @@ RENDER is a plist of further SNAPSHOT-FRAME-PANE arguments."
 (define-test every-drawn-control-and-shape-is-an-element
   "The view holds the title, three pills, and the target box.
 Each pill holds its eleven bands, its border, and its label."
-  (let* ((elements (clean-elements))
+  (let* ((elements (clean-elements (list :exercise-feedback nil)))
          (titles (top-level elements :text))
          (pills (top-level elements :session-pill))
          (outlines (top-level elements :outline)))
@@ -120,7 +128,7 @@ Each pill holds its eleven bands, its border, and its label."
 
 (define-test nested-marks-name-their-container
   "A pill's label is a :TEXT element naming the pill as container; the pill names none."
-  (let ((elements (clean-elements)))
+  (let ((elements (clean-elements (list :exercise-feedback nil))))
     (dolist (label '("alpha" "bravo" "charlie"))
       (let* ((pill (pill-named label elements))
              (texts (parts-of pill elements :text)))
@@ -130,18 +138,29 @@ Each pill holds its eleven bands, its border, and its label."
         (is eql (element-id pill) (element-container (first texts)))))))
 
 (define-test element-ids-follow-painting-order
-  "Ids run 1 to n without gaps; a pill precedes its parts; charlie, drawn first, is rightmost."
+  "Ids run 1 to n without gaps over resting and highlight feedback elements together; a pill
+precedes its parts; charlie, drawn first, is rightmost; every feedback element follows every
+resting one; and every container's id is smaller than its part's."
   (let* ((elements (clean-elements))
          (ids (mapcar #'element-id elements))
          (pills (top-level elements :session-pill))
-         (charlie (pill-named "charlie" elements)))
+         (charlie (pill-named "charlie" elements))
+         (highlighted (remove :highlighted elements :key #'element-state :test-not #'eq))
+         (resting (set-difference elements highlighted)))
     (is equal (loop for id from 1 to (length elements) collect id) ids)
     (dolist (pill pills)
       (true (every (lambda (part) (< (element-id pill) (element-id part)))
                    (parts-of pill elements))))
     (is = (reduce #'min (mapcar #'element-id pills)) (element-id charlie))
     (is = (reduce #'max (mapcar (lambda (pill) (first (element-box pill))) pills))
-        (first (element-box charlie)))))
+        (first (element-box charlie)))
+    (true highlighted)
+    (true (< (reduce #'max (mapcar #'element-id resting))
+             (reduce #'min (mapcar #'element-id highlighted))))
+    (true (every (lambda (element)
+                   (or (null (element-container element))
+                       (< (element-container element) (element-id element))))
+                 elements))))
 
 (define-test indirect-ink-resolves-to-pane-colours
   "The title's indirect ink resolves to the pane's white foreground, never black.
@@ -158,7 +177,7 @@ The pill labels and the target box are white."
 
 (define-test shape-kinds-are-classified
   "A pill's unfilled border is an :OUTLINE; its bands are :FILL elements in the drawn-state colour."
-  (let ((elements (clean-elements)))
+  (let ((elements (clean-elements (list :exercise-feedback nil))))
     (loop for (label rgb) in (list (list "alpha" *attached-rgb*)
                                    (list "bravo" *fenced-rgb*)
                                    (list "charlie" *attached-rgb*))
@@ -190,7 +209,7 @@ The pill labels and the target box are white."
 (define-test outline-background-is-the-worst-edge-sample
   "The white target box sits on gray20.
 Each gray80 pill border takes the pill's fill: gray80 on the fill is a lower ratio than on gray20."
-  (let* ((elements (clean-elements))
+  (let* ((elements (clean-elements (list :exercise-feedback nil)))
          (target (first (top-level elements :outline))))
     (true (colour-near-p *gray20* (element-background target))
           "target background ~S" (element-background target))
@@ -241,7 +260,7 @@ Each gray80 pill border takes the pill's fill: gray80 on the fill is a lower rat
 
 (define-test fill-elements-sample-earlier-layers-only
   "Every pill band sits on gray20: the bands do not overlap, and a band never lies beneath itself."
-  (let ((elements (clean-elements)))
+  (let ((elements (clean-elements (list :exercise-feedback nil))))
     (dolist (pill (top-level elements :session-pill))
       (dolist (band (parts-of pill elements :fill))
         (true (colour-near-p *gray20* (element-background band))
@@ -261,10 +280,12 @@ and no other element carries one; with the state function NIL no element does."
     (is equal '(("alpha" nil) ("bravo" nil) ("charlie" nil))
         (states (list :state-function nil))))
   (is equal '(:session-pill :session-pill :session-pill)
-      (mapcar #'element-kind (remove nil (clean-elements) :key #'element-state)))
+      (mapcar #'element-kind (remove nil (clean-elements (list :exercise-feedback nil))
+                                     :key #'element-state)))
   (is equal '() (remove nil (snapshot-elements (render-fixture
                                                 :variant :clean
-                                                :render (list :state-function nil)))
+                                                :render (list :state-function nil
+                                                              :exercise-feedback nil)))
                         :key #'element-state)))
 
 (define-test state-function-must-return-a-keyword
@@ -434,3 +455,61 @@ default, single-box, and bordered pills."
                                                         :render (list :exercise-feedback exercise)))
                      :key #'element-state)))
       (true (equalp (resting nil) (resting t)) "~A" variant))))
+
+(defun highlighted-elements (variant &optional kind)
+  "Return the fixture header's elements drawn as VARIANT whose state is :HIGHLIGHTED, of KIND
+when KIND is given, and all the render's elements as a second value."
+  (let ((elements (snapshot-elements (render-fixture :variant variant))))
+    (values (remove-if-not (lambda (element)
+                             (and (eq :highlighted (element-state element))
+                                  (or (null kind) (eq kind (element-kind element)))))
+                           elements)
+            elements)))
+
+(define-test feedback-frames-are-outlines
+  "A single-box pill's highlight frame is one :OUTLINE per pill, on the pill's box, in white on
+the pill's fill, the worse of the fill and gray20 beneath it; no highlight is a :FILL; feedback
+ids continue after the resting ones."
+  (multiple-value-bind (outlines elements) (highlighted-elements :single-box-pills :outline)
+    (false (highlighted-elements :single-box-pills :fill))
+    (is = 3 (length outlines))
+    (dolist (pill (top-level elements :session-pill))
+      (let ((frames (remove (element-id pill) outlines
+                            :key #'element-container :test-not #'eql)))
+        (is = 1 (length frames) "~A" (element-text pill))
+        (let ((frame (first frames)))
+          (true (box-near-p (rounded-box pill) (rounded-box frame))
+                "~A frame ~S" (element-text pill) (element-box frame))
+          (true (colour-near-p *white* (element-ink frame)) "ink ~S" (element-ink frame))
+          (true (colour-near-p (element-background pill) (element-background frame))
+                "~A frame background ~S" (element-text pill) (element-background frame))
+          (is eq :recorded (element-evidence frame)))))
+    (let ((resting (remove :highlighted elements :key #'element-state)))
+      (is equal (loop for id from (1+ (length resting)) to (length elements) collect id)
+          (mapcar #'element-id (remove :highlighted elements
+                                       :key #'element-state :test-not #'eq))))))
+
+(define-test feedback-fills-are-fills
+  "A default pill's highlight paints every band, so it is one white :FILL over the pill and no
+:OUTLINE; a bordered pill's highlight is one :FILL in its highlight background."
+  (multiple-value-bind (fills elements) (highlighted-elements :clean :fill)
+    (false (highlighted-elements :clean :outline))
+    (is = 3 (length fills))
+    (dolist (pill (top-level elements :session-pill))
+      (let ((own (remove (element-id pill) fills :key #'element-container :test-not #'eql)))
+        (is = 1 (length own) "~A" (element-text pill))
+        (true (box-near-p (rounded-box pill) (rounded-box (first own))))
+        (true (colour-near-p *white* (element-ink (first own)))
+              "ink ~S" (element-ink (first own))))))
+  (multiple-value-bind (fills elements) (highlighted-elements :bordered-pills :fill)
+    (is = 3 (length fills))
+    (loop for (label rgb) in (list (list "alpha" *attached-highlight-rgb*)
+                                   (list "bravo" *fenced-highlight-rgb*)
+                                   (list "charlie" *attached-highlight-rgb*))
+          for pill = (pill-named label elements)
+          for own = (remove (element-id pill) fills :key #'element-container :test-not #'eql)
+          do (is = 1 (length own) "~A" label)
+             (true (box-near-p (rounded-box pill) (rounded-box (first own)))
+                   "~A fill ~S" label (element-box (first own)))
+             (true (colour-near-p rgb (element-ink (first own)))
+                   "~A fill ink ~S" label (element-ink (first own))))))

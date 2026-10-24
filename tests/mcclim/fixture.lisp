@@ -39,6 +39,7 @@
                 #:snapshot-frame-pane)
   (:export #:*fixture-variant*
            #:fixture-view
+           #:dark-ink-fixture-view
            #:display-fixture-view
            #:session-pill
            #:fixture-session
@@ -142,6 +143,22 @@ attached. Every other variant shows alpha attached, bravo fenced, and charlie at
   (:layouts
    (default header)))
 
+(define-application-frame dark-ink-fixture-view ()
+  ()
+  (:documentation "The fixture header with a black foreground on a near-black page, #14151D.
+Every resting mark is drawn in an explicit light ink, so only the toolkit's own highlight
+feedback is drawn in the foreground.")
+  (:menu-bar nil)
+  (:panes
+   (header :application
+           :display-function 'display-fixture-view
+           :scroll-bars nil
+           :background (make-rgb-color 20/255 21/255 29/255)
+           :foreground +black+
+           :text-style (make-text-style :sans-serif :roman 13)))
+  (:layouts
+   (default header)))
+
 (defun state-fill (state)
   "Return the fill a pill drawn in STATE takes."
   (ecase state
@@ -186,16 +203,17 @@ highlight fill. Return the pill's left edge."
 (defun display-fixture-view (frame pane)
   "Draw the header pane of FRAME onto PANE as *FIXTURE-VARIANT* says.
 Draw the title, then the session pills from the right edge leftward in reverse visual order,
-8 px apart, then an unfilled target box. The title is in the pane's foreground and the box in
-white, except where the variant changes one of those inks."
-  (declare (ignore frame))
+8 px apart, then an unfilled target box. The title is in the pane's foreground, white in a
+DARK-INK-FIXTURE-VIEW, and the box in white, except where the variant changes one of those inks."
   (unless (eq *fixture-variant* :untitled)
     (with-text-style (pane (make-text-style :sans-serif :bold 22))
       (with-drawing-options (pane :ink (case *fixture-variant*
                                          (:low-contrast-text (make-gray-color 0.1))
                                          (:translucent-title
                                           (compose-in +white+ (make-opacity 0.5)))
-                                         (t +foreground-ink+)))
+                                         (t (if (typep frame 'dark-ink-fixture-view)
+                                                +white+
+                                                +foreground-ink+))))
         (draw-text* pane "EKPHRASIS" 16 32))))
   (let ((right (- (bounding-rectangle-width pane) 16)))
     (dolist (session (reverse (fixture-sessions *fixture-variant*)))

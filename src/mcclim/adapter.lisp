@@ -39,6 +39,8 @@
                 #:composite-over
                 #:contrast-ratio
                 #:element-background
+                #:element-box
+                #:element-container
                 #:element-id
                 #:element-ink
                 #:element-kind
@@ -176,6 +178,8 @@ else."
 
 (defun walk-records (history pane &optional (ink-resolver #'resolve-ink) state-function)
   "Return elements for the records under HISTORY, depth first, numbered from 1 in painting order.
+Return as further values the fill layers, most recently drawn first, as RGB-BENEATH takes them;
+PANE's resolved background; and an alist (presentation . element) in painting order.
 A presentation becomes an element of its type, numbered before its descendants, which name it as
 their container; its text joins its text descendants' strings with one space, its ink and
 background are its first text descendant's, and its state is what REPORTED-STATE gives for
@@ -187,6 +191,7 @@ element's background is what lies beneath its sample points: the topmost earlier
 resolved ink whose region contains the point, else PANE's background. A translucent ink is
 stored composited over that background; an :OUTLINE keeps its lowest-contrast sample."
   (let ((elements '())
+        (presentations '())
         (layers '())
         (next-id 0)
         (background (values (funcall ink-resolver +background-ink+ pane))))
@@ -215,6 +220,7 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
                                      :state (reported-state state-function record)))
                       (before elements)
                       (id (element-id element)))
+                 (push (cons record element) presentations)
                  (map-over-output-records (lambda (child) (visit child id)) record)
                  (let ((texts (remove :text (reverse (ldiff elements before))
                                       :key #'element-kind :test-not #'eq)))
@@ -251,7 +257,7 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
                         (map-over-output-records (lambda (child) (visit child container))
                                                  record))))))
       (map-over-output-records (lambda (record) (visit record nil)) history))
-    (nreverse elements)))
+    (values (nreverse elements) layers background (nreverse presentations))))
 
 (define-condition feedback-state-not-restored (error)
   ((presentation-type :initarg :presentation-type :reader feedback-state-presentation-type)
@@ -331,6 +337,155 @@ sheet repaints never reach a medium on a headless port."
              :box (multiple-value-list (bounding-rectangle* presentation))))
     (values (added-primitives exercised resting) exercised)))
 
+(defun union-box (boxes)
+  "Return the box (x1 y1 x2 y2) bounding BOXES, a non-empty list of boxes."
+  (loop for (x1 y1 x2 y2) in boxes
+        minimize x1 into left
+        minimize y1 into top
+        maximize x2 into right
+        maximize y2 into bottom
+        finally (return (list left top right bottom))))
+
+(defun filled-coverage (primitives box)
+  "Return the fraction of the integer pixel grid of BOX (x1 y1 x2 y2) the filled PRIMITIVES cover.
+A pixel counts once however many primitives cover it. A filled primitive covers at least one
+pixel across each dimension of its box, so a 1 px stroke drawn as a thin rectangle counts."
+  (destructuring-bind (x1 y1 x2 y2) box
+    (let* ((width (max 1 (- x2 x1)))
+           (height (max 1 (- y2 y1)))
+           (grid (make-array (* width height) :element-type 'bit :initial-element 0)))
+      (dolist (primitive primitives)
+        (when (getf primitive :filled)
+          (destructuring-bind (px1 py1 px2 py2) (getf primitive :box)
+            (loop for y from (max py1 y1) below (min (max py2 (1+ py1)) (+ y1 height))
+                  do (loop for x from (max px1 x1) below (min (max px2 (1+ px1)) (+ x1 width))
+                           do (setf (sbit grid (+ (* (- y y1) width) (- x x1))) 1))))))
+      (/ (count 1 grid) (* width height)))))
+
+(defun box-within-p (inner outer)
+  "True when the box INNER lies within the box OUTER, allowing 1 px on every side."
+  (destructuring-bind (ix1 iy1 ix2 iy2) inner
+    (destructuring-bind (ox1 oy1 ox2 oy2) outer
+      (and (>= ix1 (1- ox1)) (>= iy1 (1- oy1)) (<= ix2 (1+ ox2)) (<= iy2 (1+ oy2))))))
+
+(defun boxes-overlap-p (a b)
+  "True when the interiors of the boxes A and B intersect."
+  (destructuring-bind (ax1 ay1 ax2 ay2) a
+    (destructuring-bind (bx1 by1 bx2 by2) b
+      (and (< ax1 bx2) (< bx1 ax2) (< ay1 by2) (< by1 ay2)))))
+
+(defun group-by-ink (primitives pane ink-resolver)
+  "Return PRIMITIVES grouped by the colour their ink resolves to, in order of first appearance.
+Each group is a list (rgb alpha primitives); RGB is NIL for an ink with no fixed colour.
+INK-RESOLVER is called as RESOLVE-INK is."
+  (let ((groups '()))
+    (dolist (primitive primitives)
+      (multiple-value-bind (rgb alpha) (funcall ink-resolver (getf primitive :ink) pane)
+        (let* ((alpha (or alpha 1))
+               (group (find-if (lambda (group)
+                                 (and (equal rgb (first group)) (= alpha (second group))))
+                               groups)))
+          (if group
+              (push primitive (third group))
+              (push (list rgb alpha (list primitive)) groups)))))
+    (nreverse (mapcar (lambda (group)
+                        (list (first group) (second group) (reverse (third group))))
+                      groups))))
+
+(defun label-on-fill (label fill fill-primitives exercised pane ink-resolver)
+  "Return the ink and background, as two values, the resting :TEXT element LABEL shows on the
+highlighted :FILL element FILL. FILL-PRIMITIVES are the fill's primitives as
+EXERCISE-FEEDBACK-STATE returns them; EXERCISED is the whole highlighted replay. When a fill
+primitive overlapping LABEL is drawn after LABEL's text, the fill covers the glyphs: ink and
+background are both the fill's ink. Otherwise the label's ink, as INK-RESOLVER gives it, shows
+over the fill's ink."
+  (let* ((fill-ink (element-ink fill))
+         (box (mapcar #'round (element-box label)))
+         (text (find-if (lambda (primitive)
+                          (and (eq :text (getf primitive :shape))
+                               (equal (element-text label) (getf primitive :text))
+                               (equal box (getf primitive :box))))
+                        exercised))
+         (text-position (and text (position text exercised))))
+    (cond ((and text-position
+                (some (lambda (primitive)
+                        (and (> (getf primitive :position) text-position)
+                             (boxes-overlap-p box (getf primitive :box))))
+                      fill-primitives))
+           (values fill-ink fill-ink))
+          (text
+           (multiple-value-bind (rgb alpha) (funcall ink-resolver (getf text :ink) pane)
+             (values (and rgb (ink-over rgb (or alpha 1) fill-ink)) fill-ink)))
+          (t
+           (values (element-ink label) fill-ink)))))
+
+(defun feedback-elements (pane presentations resting layers background ink-resolver)
+  "Exercise the highlight of each presentation on PANE and return the elements it adds.
+PRESENTATIONS is an alist (presentation . element) in painting order; RESTING the resting
+elements; LAYERS and BACKGROUND what WALK-RECORDS returned with them. Every element returned has
+state :HIGHLIGHTED, evidence :RECORDED, the presentation's element as container, and the next id
+after RESTING's. For each presentation, in order:
+- each added text primitive is a :TEXT element;
+- the other added primitives, grouped by resolved ink, are each one element over the group's
+  union box: a :FILL when the group's filled primitives cover at least 90% of that box, otherwise
+  an :OUTLINE;
+- each resting :TEXT element of the presentation lying within a highlighted :FILL is judged on
+  it again as a :TEXT element, its colours from LABEL-ON-FILL.
+Inks resolve through INK-RESOLVER; backgrounds are sampled against the resting LAYERS over
+BACKGROUND, as WALK-RECORDS samples."
+  (let ((next-id (length resting))
+        (made '()))
+    (flet ((emit (&rest initargs)
+             (let ((element (apply #'make-element :id (incf next-id)
+                                                  :state :highlighted
+                                                  :evidence :recorded
+                                                  initargs)))
+               (push element made)
+               element))
+           (sampled (kind box rgb alpha)
+             (multiple-value-list (sample-element kind box rgb alpha layers background))))
+      (loop for (presentation . owner) in presentations
+            for container = (element-id owner)
+            do (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
+                 (let ((fills '()))
+                   (dolist (primitive added)
+                     (when (eq :text (getf primitive :shape))
+                       (multiple-value-bind (rgb alpha)
+                           (funcall ink-resolver (getf primitive :ink) pane)
+                         (destructuring-bind (ink under)
+                             (sampled :text (getf primitive :box) rgb (or alpha 1))
+                           (emit :kind :text :text (getf primitive :text)
+                                 :box (getf primitive :box) :container container
+                                 :ink ink :background under)))))
+                   (loop for (rgb alpha primitives)
+                           in (group-by-ink (remove :text added
+                                                    :key (lambda (primitive)
+                                                           (getf primitive :shape)))
+                                            pane ink-resolver)
+                         for box = (union-box (mapcar (lambda (primitive) (getf primitive :box))
+                                                      primitives))
+                         for kind = (if (>= (filled-coverage primitives box) 9/10) :fill :outline)
+                         do (destructuring-bind (ink under) (sampled kind box rgb alpha)
+                              (let ((element (emit :kind kind :box box :container container
+                                                   :ink ink :background under)))
+                                (when (eq kind :fill)
+                                  (push (cons element primitives) fills)))))
+                   (dolist (label resting)
+                     (when (and (eq :text (element-kind label))
+                                (eql container (element-container label)))
+                       (let ((cover (find-if (lambda (fill)
+                                               (box-within-p (element-box label)
+                                                             (element-box (car fill))))
+                                             fills)))
+                         (when cover
+                           (multiple-value-bind (ink under)
+                               (label-on-fill label (car cover) (cdr cover) exercised
+                                              pane ink-resolver)
+                             (emit :kind :text :text (element-text label)
+                                   :box (element-box label) :container container
+                                   :ink ink :background under)))))))))
+      (nreverse made))))
+
 (defun snapshot-frame-pane (frame-class pane-name
                             &key (width 900) (height 60) frame-initargs
                               ((:ink-resolver ink-resolver) #'resolve-ink)
@@ -341,17 +496,22 @@ The frame is made WIDTH by HEIGHT on a fresh fixed-width port, with FRAME-INITAR
 display function runs once through a forced redisplay. INK-RESOLVER, called as RESOLVE-INK is,
 gives the colour of every ink the walk meets and of the pane's background. STATE-FUNCTION, when
 non-NIL, is called with the object of each presentation; its keyword result becomes that
-element's reported state, and any other non-NIL result signals an error. EXERCISE-FEEDBACK is
-accepted for the highlight feedback elements. The frame is disowned and the port destroyed
-before returning, whether or not the render succeeds."
-  (declare (ignorable exercise-feedback))
+element's reported state, and any other non-NIL result signals an error. When EXERCISE-FEEDBACK
+is true, each presentation's highlight is exercised after the resting walk and the elements
+FEEDBACK-ELEMENTS makes of it follow the resting ones; NIL gives the resting drawing alone. The
+frame is disowned and the port destroyed before returning, whether or not the render succeeds."
   (call-with-rendered-pane
    frame-class pane-name
    (lambda (frame pane)
      (declare (ignore frame))
-     (make-snapshot :view (intern (string pane-name) :keyword)
-                    :elements (walk-records (stream-output-history pane) pane
-                                            ink-resolver state-function)))
+     (multiple-value-bind (elements layers background presentations)
+         (walk-records (stream-output-history pane) pane ink-resolver state-function)
+       (make-snapshot :view (intern (string pane-name) :keyword)
+                      :elements (if exercise-feedback
+                                    (append elements
+                                            (feedback-elements pane presentations elements
+                                                               layers background ink-resolver))
+                                    elements))))
    :width width :height height :frame-initargs frame-initargs))
 
 (defun check-frame-pane (spec frame-class pane-name &key observers render thresholds)
