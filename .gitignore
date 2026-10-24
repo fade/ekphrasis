@@ -1,0 +1,9 @@
+*.fasl
+*.ufasl
+*.x86f
+*.cfasl
+.asdf-cache/
+bin/
+*.log
+*.pid
+.dsmr-slynk.port
