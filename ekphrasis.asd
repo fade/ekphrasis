@@ -18,7 +18,8 @@
                "ekphrasis/tests/model-test"
                "ekphrasis/tests/run-test"
                "ekphrasis/tests/report-test"
-               "ekphrasis/tests/spec-test")
+               "ekphrasis/tests/spec-test"
+               "ekphrasis/tests/compare-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
@@ -57,7 +58,8 @@
                "ekphrasis/tests/mcclim/acceptance-test"
                "ekphrasis/tests/mcclim/medium-test"
                "ekphrasis/tests/mcclim/records-test"
-               "ekphrasis/tests/mcclim/adapter-test")
+               "ekphrasis/tests/mcclim/adapter-test"
+               "ekphrasis/tests/mcclim/control-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names

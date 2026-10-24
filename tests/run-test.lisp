@@ -30,7 +30,7 @@
                                                :box (list 16 40 72 56)))))
 
 (defun header-spec ()
-  "Return a spec naming one element the header draws and one it does not."
+  "Return a spec naming the header's title and a status it draws with other text."
   (list :view :header
         :elements (list (list :title :kind :text :label "EKPHRASIS")
                         (list :status :kind :text :label "ONLINE"))))
@@ -60,7 +60,7 @@ Return the findings, the report, and the events in delivery order."
   (push event (recorded-events observer)))
 
 (define-test observer-receives-events-in-order
-  "The run delivers :view-rendering, the :missing finding, one :element-examined per element in
+  "The run delivers :view-rendering, the :label finding, one :element-examined per element in
 painting order, then :run-end with the counts."
   (multiple-value-bind (findings report events) (watched-run)
     (declare (ignore report))
@@ -68,7 +68,7 @@ painting order, then :run-end with the counts."
         (event-kinds events))
     (is eq :header (getf (first events) :view))
     (let ((finding (getf (first (events-of-kind :finding events)) :finding)))
-      (is eq :missing (finding-check finding))
+      (is eq :label (finding-check finding))
       (is eq :status (finding-spec-id finding))
       (is eq (first findings) finding))
     (is equal '(1 2)

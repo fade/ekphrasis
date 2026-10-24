@@ -7,8 +7,11 @@
 (defpackage #:ekphrasis/src/report
   (:use #:cl)
   (:import-from #:ekphrasis/src/model
+                #:finding-box
                 #:finding-check
+                #:finding-container
                 #:finding-detail
+                #:finding-element-id
                 #:finding-expected
                 #:finding-measured
                 #:finding-severity
@@ -42,17 +45,59 @@ Return the string written when STREAM is NIL, otherwise NIL."
          (funcall function stream)
          nil)))
 
+(defun quoted-text (text)
+  "Return TEXT printed readably in double quotes, or \"no text\" when TEXT is NIL."
+  (if text
+      (prin1-to-string text)
+      "no text"))
+
+(defun box-text (box)
+  "Return \" at (x1 y1 x2 y2)\" for BOX with each coordinate rounded, or \"\" when BOX is NIL."
+  (if box
+      (format nil " at (~{~D~^ ~})" (mapcar #'round box))
+      ""))
+
+(defun where-text (finding)
+  "Return the view FINDING is in, followed by \" #id\" of its container when it has one."
+  (if (finding-container finding)
+      (format nil "~A #~D" (name-text (finding-view finding)) (finding-container finding))
+      (name-text (finding-view finding))))
+
+(defun element-reference (finding)
+  "Return FINDING's spec id and drawn element id as \":bravo #7\", omitting whichever is NIL."
+  (format nil "~{~A~^ ~}"
+          (remove nil (list (and (finding-spec-id finding)
+                                 (keyword-text (finding-spec-id finding)))
+                            (and (finding-element-id finding)
+                                 (format nil "#~D" (finding-element-id finding)))))))
+
 (defun write-finding-text (finding out)
   "Write the check-specific text of FINDING to OUT."
   (let ((*print-pretty* nil)
-        (*print-escape* t))
+        (*print-escape* t)
+        (kind (name-text (getf (finding-detail finding) :kind))))
     (case (finding-check finding)
       (:missing
-       (format out "~A (~A) in ~A: expected ~S, none drawn"
+       (format out "~A (~A) in ~A: expected ~A, none drawn"
                (keyword-text (finding-spec-id finding))
-               (name-text (getf (finding-detail finding) :kind))
+               kind
                (name-text (finding-view finding))
-               (finding-expected finding)))
+               (quoted-text (finding-expected finding))))
+      (:label
+       (format out "~A (~A)~A in ~A: expected ~A, drawn ~A"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (quoted-text (finding-expected finding))
+               (quoted-text (finding-measured finding))))
+      (:unexpected
+       (format out "~A (~A)~A in ~A: drawn ~A, not in the spec"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (quoted-text (finding-measured finding))))
       (t
        (format out "~A in ~A: expected ~S, measured ~S"
                (if (finding-spec-id finding) (keyword-text (finding-spec-id finding)) "element")

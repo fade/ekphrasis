@@ -11,6 +11,7 @@
 (defpackage #:ekphrasis/tests/report-test
   (:use #:cl #:zebra)
   (:import-from #:ekphrasis
+                #:format-finding
                 #:format-report
                 #:make-finding))
 
@@ -61,3 +62,43 @@
         (header-line (format-report :header (list (missing "EKPHRASIS")))))
     (is string= "header: 3 findings (2 errors, 1 warning)" (header-line three))
     (is = 3 (count #\Newline three))))
+
+(define-test label-and-unexpected-lines
+  "A :LABEL error and an :UNEXPECTED warning each report as one line.
+The line names the element, its box, and the view, with the container's id when it has one."
+  (let ((label (make-finding :check :label
+                             :severity :error
+                             :spec-id :bravo
+                             :view :header
+                             :element-id 7
+                             :box (list 709.0d0 8.0d0 768.0d0 30.0d0)
+                             :expected "bravo"
+                             :measured "brovo"
+                             :detail (list :kind :session-pill)))
+        (unexpected (make-finding :check :unexpected
+                                  :severity :warning
+                                  :view :header
+                                  :element-id 9
+                                  :box (list 600 8 664 30)
+                                  :measured "delta"
+                                  :detail (list :kind :session-pill)))
+        (nested (make-finding :check :unexpected
+                              :severity :warning
+                              :view :header
+                              :container 3
+                              :element-id 9
+                              :box (list 600 8 664 30)
+                              :measured "50~ off"
+                              :detail (list :kind :session-pill))))
+    (is string= (concatenate 'string
+                             "  error label :bravo #7 (session-pill) at (709 8 768 30) in header: "
+                             "expected \"bravo\", drawn \"brovo\"")
+        (format-finding label nil))
+    (is string= (concatenate 'string
+                             "  warning unexpected #9 (session-pill) at (600 8 664 30) in header: "
+                             "drawn \"delta\", not in the spec")
+        (format-finding unexpected nil))
+    (is string= (concatenate 'string
+                             "  warning unexpected #9 (session-pill) at (600 8 664 30) "
+                             "in header #3: drawn \"50~ off\", not in the spec")
+        (format-finding nested nil))))
