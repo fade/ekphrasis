@@ -403,13 +403,16 @@ INK-RESOLVER is called as RESOLVE-INK is."
                         (list (first group) (second group) (reverse (third group))))
                       groups))))
 
-(defun label-on-fill (label fill fill-primitives exercised pane ink-resolver)
+(defun label-on-fill (label fill fill-primitives exercised pane ink-resolver layers-before
+                      background)
   "Return the ink and background, as two values, the resting :TEXT element LABEL shows on the
 highlighted :FILL element FILL. FILL-PRIMITIVES are the fill's primitives as
-EXERCISE-FEEDBACK-STATE returns them; EXERCISED is the whole highlighted replay. When a fill
-primitive overlapping LABEL is drawn after LABEL's text, the fill covers the glyphs: ink and
-background are both the fill's ink. Otherwise the label's ink, as INK-RESOLVER gives it, shows
-over the fill's ink."
+EXERCISE-FEEDBACK-STATE returns them; EXERCISED is the whole highlighted replay. LAYERS-BEFORE
+is a function of a position in EXERCISED returning the layers drawn before it, as RGB-BENEATH
+takes them, over BACKGROUND. When a fill primitive overlapping LABEL is drawn after LABEL's
+text, the fill covers the glyphs: ink and background are both the fill's ink. Otherwise LABEL's
+text primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the
+layers drawn before it. With no text primitive, LABEL's own ink shows on the fill's ink."
   (let* ((fill-ink (element-ink fill))
          (box (mapcar #'round (element-box label)))
          (text (find-if (lambda (primitive)
@@ -426,7 +429,8 @@ over the fill's ink."
            (values fill-ink fill-ink))
           (text
            (multiple-value-bind (rgb alpha) (funcall ink-resolver (getf text :ink) pane)
-             (values (and rgb (ink-over rgb (or alpha 1) fill-ink)) fill-ink)))
+             (sample-element :text (element-box label) rgb (or alpha 1)
+                             (funcall layers-before text-position) background)))
           (t
            (values (element-ink label) fill-ink)))))
 
@@ -442,8 +446,11 @@ after RESTING's. For each presentation, in order:
   an :OUTLINE;
 - each resting :TEXT element of the presentation lying within a highlighted :FILL is judged on
   it again as a :TEXT element, its colours from LABEL-ON-FILL.
-Inks resolve through INK-RESOLVER; backgrounds are sampled against the resting LAYERS over
-BACKGROUND, as WALK-RECORDS samples."
+Inks resolve through INK-RESOLVER. A mark at position P of the highlighted replay is sampled, as
+WALK-RECORDS samples, against the layers drawn before it: the added filled primitives whose
+position is below P, most recently drawn first, each a layer over its box, of no fixed colour
+when its ink has none; then LAYERS, over BACKGROUND. A group element is sampled at its earliest
+primitive's position, so no group lies beneath itself."
   (let ((next-id (length resting))
         (made '()))
     (flet ((emit (&rest initargs)
@@ -453,48 +460,74 @@ BACKGROUND, as WALK-RECORDS samples."
                                                   initargs)))
                (push element made)
                element))
-           (sampled (kind box rgb alpha)
-             (multiple-value-list (sample-element kind box rgb alpha layers background))))
+           (added-layers (added)
+             (loop for primitive in added
+                   when (getf primitive :filled)
+                     collect (multiple-value-bind (rgb alpha)
+                                 (funcall ink-resolver (getf primitive :ink) pane)
+                               (list (getf primitive :position)
+                                     (apply #'make-rectangle* (getf primitive :box))
+                                     rgb
+                                     (if rgb (or alpha 1) 1))))))
       (loop for (presentation . owner) in presentations
             for container = (element-id owner)
             do (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
-                 (let ((fills '()))
-                   (dolist (primitive added)
-                     (when (eq :text (getf primitive :shape))
-                       (multiple-value-bind (rgb alpha)
-                           (funcall ink-resolver (getf primitive :ink) pane)
-                         (destructuring-bind (ink under)
-                             (sampled :text (getf primitive :box) rgb (or alpha 1))
-                           (emit :kind :text :text (getf primitive :text)
-                                 :box (getf primitive :box) :container container
-                                 :ink ink :background under)))))
-                   (loop for (rgb alpha primitives)
-                           in (group-by-ink (remove :text added
-                                                    :key (lambda (primitive)
-                                                           (getf primitive :shape)))
-                                            pane ink-resolver)
-                         for box = (union-box (mapcar (lambda (primitive) (getf primitive :box))
-                                                      primitives))
-                         for kind = (if (>= (filled-coverage primitives box) 9/10) :fill :outline)
-                         do (destructuring-bind (ink under) (sampled kind box rgb alpha)
-                              (let ((element (emit :kind kind :box box :container container
-                                                   :ink ink :background under)))
-                                (when (eq kind :fill)
-                                  (push (cons element primitives) fills)))))
-                   (dolist (label resting)
-                     (when (and (eq :text (element-kind label))
-                                (eql container (element-container label)))
-                       (let ((cover (find-if (lambda (fill)
-                                               (box-within-p (element-box label)
-                                                             (element-box (car fill))))
-                                             fills)))
-                         (when cover
-                           (multiple-value-bind (ink under)
-                               (label-on-fill label (car cover) (cdr cover) exercised
+                 (let ((fills '())
+                       (drawn (added-layers added)))
+                   (labels ((layers-before (position)
+                              (let ((before layers))
+                                (loop for (at . layer) in drawn
+                                      while (< at position)
+                                      do (push layer before))
+                                before))
+                            (sampled (kind box rgb alpha position)
+                              (multiple-value-list
+                               (sample-element kind box rgb alpha
+                                               (layers-before position) background))))
+                     (dolist (primitive added)
+                       (when (eq :text (getf primitive :shape))
+                         (multiple-value-bind (rgb alpha)
+                             (funcall ink-resolver (getf primitive :ink) pane)
+                           (destructuring-bind (ink under)
+                               (sampled :text (getf primitive :box) rgb (or alpha 1)
+                                        (getf primitive :position))
+                             (emit :kind :text :text (getf primitive :text)
+                                   :box (getf primitive :box) :container container
+                                   :ink ink :background under)))))
+                     (loop for (rgb alpha primitives)
+                             in (group-by-ink (remove :text added
+                                                      :key (lambda (primitive)
+                                                             (getf primitive :shape)))
                                               pane ink-resolver)
-                             (emit :kind :text :text (element-text label)
-                                   :box (element-box label) :container container
-                                   :ink ink :background under)))))))))
+                           for box = (union-box (mapcar (lambda (primitive)
+                                                          (getf primitive :box))
+                                                        primitives))
+                           for kind = (if (>= (filled-coverage primitives box) 9/10)
+                                          :fill
+                                          :outline)
+                           for earliest = (reduce #'min primitives
+                                                  :key (lambda (primitive)
+                                                         (getf primitive :position)))
+                           do (destructuring-bind (ink under)
+                                  (sampled kind box rgb alpha earliest)
+                                (let ((element (emit :kind kind :box box :container container
+                                                     :ink ink :background under)))
+                                  (when (eq kind :fill)
+                                    (push (cons element primitives) fills)))))
+                     (dolist (label resting)
+                       (when (and (eq :text (element-kind label))
+                                  (eql container (element-container label)))
+                         (let ((cover (find-if (lambda (fill)
+                                                 (box-within-p (element-box label)
+                                                               (element-box (car fill))))
+                                               fills)))
+                           (when cover
+                             (multiple-value-bind (ink under)
+                                 (label-on-fill label (car cover) (cdr cover) exercised
+                                                pane ink-resolver #'layers-before background)
+                               (emit :kind :text :text (element-text label)
+                                     :box (element-box label) :container container
+                                     :ink ink :background under))))))))))
       (nreverse made))))
 
 (defun snapshot-frame-pane (frame-class pane-name
