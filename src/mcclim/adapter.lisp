@@ -17,6 +17,7 @@
                 #:find-frame-manager
                 #:find-pane-named
                 #:frame-manager
+                #:highlight-output-record
                 #:make-application-frame
                 #:make-polygon*
                 #:make-rectangle*
@@ -31,7 +32,9 @@
                 #:presentationp
                 #:redisplay-frame-pane
                 #:region-contains-position-p
-                #:stream-output-history)
+                #:replay
+                #:stream-output-history
+                #:with-output-recording-options)
   (:import-from #:ekphrasis
                 #:composite-over
                 #:contrast-ratio
@@ -44,6 +47,7 @@
                 #:make-snapshot
                 #:run-check)
   (:import-from #:ekphrasis/src/mcclim/medium
+                #:*drawing-log*
                 #:make-fixed-width-port)
   (:import-from #:ekphrasis/src/mcclim/records
                 #:polygon-record-coordinates
@@ -54,7 +58,13 @@
                 #:uniform-compositum-p)
   (:export #:snapshot-frame-pane
            #:check-frame-pane
-           #:resolve-ink))
+           #:resolve-ink
+           #:call-with-rendered-pane
+           #:capture-replay
+           #:exercise-feedback-state
+           #:feedback-state-not-restored
+           #:feedback-state-presentation-type
+           #:feedback-state-box))
 
 (in-package #:ekphrasis/src/mcclim/adapter)
 
@@ -243,17 +253,25 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
       (map-over-output-records (lambda (record) (visit record nil)) history))
     (nreverse elements)))
 
-(defun snapshot-frame-pane (frame-class pane-name
-                            &key (width 900) (height 60) frame-initargs
-                              ((:ink-resolver ink-resolver) #'resolve-ink)
-                              ((:state-function state-function) nil))
-  "Render the pane PANE-NAME of a fresh FRAME-CLASS frame headlessly and return its snapshot.
+(define-condition feedback-state-not-restored (error)
+  ((presentation-type :initarg :presentation-type :reader feedback-state-presentation-type)
+   (box :initarg :box :reader feedback-state-box))
+  (:report (lambda (condition stream)
+             (format stream "Unhighlighting the ~S presentation at ~S did not restore the drawing ~
+                             it had at rest."
+                     (feedback-state-presentation-type condition)
+                     (feedback-state-box condition))))
+  (:documentation "Signalled when a presentation, highlighted and then unhighlighted, no longer
+draws what it drew at rest. PRESENTATION-TYPE is its presentation type; BOX its bounding box
+(x1 y1 x2 y2)."))
+
+(defun call-with-rendered-pane (frame-class pane-name function
+                                &key (width 900) (height 60) frame-initargs)
+  "Render the pane PANE-NAME of a fresh FRAME-CLASS frame headlessly and call FUNCTION on it.
 The frame is made WIDTH by HEIGHT on a fresh fixed-width port, with FRAME-INITARGS added; its
-display function runs once through a forced redisplay. INK-RESOLVER, called as RESOLVE-INK is,
-gives the colour of every ink the walk meets and of the pane's background. STATE-FUNCTION, when
-non-NIL, is called with the object of each presentation; its keyword result becomes that
-element's reported state, and any other non-NIL result signals an error. The frame is disowned
-and the port destroyed before returning, whether or not the render succeeds."
+display function runs once through a forced redisplay. FUNCTION is called with the frame and the
+pane, with *APPLICATION-FRAME* bound to the frame, and its values are returned. The frame is
+disowned and the port destroyed before returning, whether or not FUNCTION returns normally."
   (let* ((port (make-fixed-width-port))
          (frame nil))
     (unwind-protect
@@ -265,12 +283,76 @@ and the port destroyed before returning, whether or not the render succeeds."
                              (find-pane-named made pane-name))))
            (let ((*application-frame* made))
              (redisplay-frame-pane made pane :force-p t)
-             (make-snapshot :view (intern (string pane-name) :keyword)
-                            :elements (walk-records (stream-output-history pane) pane
-                                                    ink-resolver state-function))))
+             (funcall function made pane)))
       (when frame
         (disown-frame (frame-manager frame) frame))
       (destroy-port port))))
+
+(defun capture-replay (pane)
+  "Replay PANE's output history onto its medium and return the drawing primitives, in drawing
+order. Each is a plist as *DRAWING-LOG* describes. Nothing is recorded during the replay, so the
+history is left as it was. PANE draws on a FIXED-WIDTH-MEDIUM."
+  (let ((*drawing-log* (make-array 64 :adjustable t :fill-pointer 0)))
+    (with-output-recording-options (pane :record nil :draw t)
+      (replay (stream-output-history pane) pane))
+    (coerce *drawing-log* 'list)))
+
+(defun added-primitives (exercised resting)
+  "Return the primitives of EXERCISED that RESTING does not account for, by multiset difference
+under EQUALP, in EXERCISED order. Each is returned as (:POSITION n . primitive), N its zero-based
+position in EXERCISED."
+  (let ((unmatched (copy-list resting)))
+    (loop for primitive in exercised
+          for position from 0
+          for match = (member primitive unmatched :test #'equalp)
+          if match
+            do (setf unmatched (remove (first match) unmatched :count 1 :test #'eq))
+          else
+            collect (list* :position position primitive))))
+
+(defun exercise-feedback-state (pane presentation)
+  "Put PRESENTATION on PANE into its highlighted state, capture what is then drawn, and restore it.
+Return two values: the primitives the highlighted replay draws beyond the resting one, each as
+(:POSITION n . primitive) in highlighted-replay order; and the whole highlighted replay. A
+primitive is a plist as *DRAWING-LOG* describes. The presentation is unhighlighted even on a
+non-local exit. Signal FEEDBACK-STATE-NOT-RESTORED when the replay after unhighlighting differs
+from the resting one. Highlighting goes through CLIM:HIGHLIGHT-OUTPUT-RECORD: pointer motion and
+sheet repaints never reach a medium on a headless port."
+  (let ((resting (capture-replay pane))
+        (exercised nil))
+    (unwind-protect
+         (progn
+           (highlight-output-record presentation pane :highlight)
+           (setf exercised (capture-replay pane)))
+      (highlight-output-record presentation pane :unhighlight))
+    (unless (equalp resting (capture-replay pane))
+      (error 'feedback-state-not-restored
+             :presentation-type (presentation-type presentation)
+             :box (multiple-value-list (bounding-rectangle* presentation))))
+    (values (added-primitives exercised resting) exercised)))
+
+(defun snapshot-frame-pane (frame-class pane-name
+                            &key (width 900) (height 60) frame-initargs
+                              ((:ink-resolver ink-resolver) #'resolve-ink)
+                              ((:state-function state-function) nil)
+                              ((:exercise-feedback exercise-feedback) t))
+  "Render the pane PANE-NAME of a fresh FRAME-CLASS frame headlessly and return its snapshot.
+The frame is made WIDTH by HEIGHT on a fresh fixed-width port, with FRAME-INITARGS added; its
+display function runs once through a forced redisplay. INK-RESOLVER, called as RESOLVE-INK is,
+gives the colour of every ink the walk meets and of the pane's background. STATE-FUNCTION, when
+non-NIL, is called with the object of each presentation; its keyword result becomes that
+element's reported state, and any other non-NIL result signals an error. EXERCISE-FEEDBACK is
+accepted for the highlight feedback elements. The frame is disowned and the port destroyed
+before returning, whether or not the render succeeds."
+  (declare (ignorable exercise-feedback))
+  (call-with-rendered-pane
+   frame-class pane-name
+   (lambda (frame pane)
+     (declare (ignore frame))
+     (make-snapshot :view (intern (string pane-name) :keyword)
+                    :elements (walk-records (stream-output-history pane) pane
+                                            ink-resolver state-function)))
+   :width width :height height :frame-initargs frame-initargs))
 
 (defun check-frame-pane (spec frame-class pane-name &key observers render thresholds)
   "Judge the pane PANE-NAME of a fresh FRAME-CLASS frame against SPEC, rendered headlessly.

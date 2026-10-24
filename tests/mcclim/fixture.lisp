@@ -13,6 +13,7 @@
                 #:+gray20+
                 #:+gray80+
                 #:+white+
+                #:bounding-rectangle-min-x
                 #:bounding-rectangle-width
                 #:compose-in
                 #:define-application-frame
@@ -24,11 +25,16 @@
                 #:make-opacity
                 #:make-rgb-color
                 #:make-text-style
+                #:map-over-output-records
+                #:presentationp
+                #:stream-output-history
+                #:surrounding-output-with-border
                 #:text-size
                 #:with-drawing-options
                 #:with-output-as-presentation
                 #:with-text-style)
   (:import-from #:ekphrasis/mcclim
+                #:call-with-rendered-pane
                 #:check-frame-pane
                 #:snapshot-frame-pane)
   (:export #:*fixture-variant*
@@ -42,10 +48,14 @@
            #:fixture-session-drawn-state
            #:*attached-fill*
            #:*fenced-fill*
+           #:*attached-highlight-fill*
+           #:*fenced-highlight-fill*
            #:fixture-sessions
            #:title-spec
            #:fixture-spec
            #:render-fixture
+           #:call-with-fixture-pane
+           #:fixture-presentations
            #:check-fixture))
 
 (in-package #:ekphrasis/tests/mcclim/fixture)
@@ -61,7 +71,9 @@
 :FLIPPING-OUTLINE draws the target box in the flipping ink.
 :SWAPPED draws bravo left of alpha.
 :WRONG-STATE has bravo attached, and draws it so.
-:STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.")
+:STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.
+:SINGLE-BOX-PILLS presents each pill as single-box, so its highlight is one thin frame.
+:BORDERED-PILLS draws each pill as a label in a rounded border with a highlight background.")
 
 (define-presentation-type session-pill ())
 
@@ -80,6 +92,12 @@ The struct is named apart from the SESSION-PILL presentation type: both would de
 (defparameter *fenced-fill* (make-rgb-color (/ #x80 255) (/ #x29 255) (/ #x29 255))
   "The fill of a pill drawn as fenced.")
 
+(defparameter *attached-highlight-fill* (make-rgb-color (/ #x7A 255) (/ #x5A 255) (/ #x26 255))
+  "The fill of a bordered pill drawn as attached, while highlighted.")
+
+(defparameter *fenced-highlight-fill* (make-rgb-color (/ #xA0 255) (/ #x3A 255) (/ #x3A 255))
+  "The fill of a bordered pill drawn as fenced, while highlighted.")
+
 (defun fixture-sessions (variant)
   "Return the sessions the header shows for VARIANT, in visual order from left to right.
 :MISSING drops bravo; :RELABELLED names bravo \"brovo\"; :SWAPPED shows bravo first;
@@ -87,7 +105,7 @@ The struct is named apart from the SESSION-PILL presentation type: both would de
 attached. Every other variant shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
-      :flipping-outline)
+      :flipping-outline :single-box-pills :bordered-pills)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -130,20 +148,40 @@ attached. Every other variant shows alpha attached, bravo fenced, and charlie at
     (:attached *attached-fill*)
     (:fenced *fenced-fill*)))
 
+(defun state-highlight-fill (state)
+  "Return the fill a bordered pill drawn in STATE takes while highlighted."
+  (ecase state
+    (:attached *attached-highlight-fill*)
+    (:fenced *fenced-highlight-fill*)))
+
 (defun draw-session-pill (pane session right)
   "Draw SESSION's pill on PANE with its right edge at RIGHT, as a SESSION-PILL presentation.
 The pill is eleven filled bands 2 px tall from y 8 to 30 in its drawn-state fill, an unfilled
-gray80 border through its corners, and its white label. Return the pill's left edge."
+gray80 border through its corners, and its white label; under :SINGLE-BOX-PILLS the presentation
+is single-box. Under :BORDERED-PILLS the pill is instead its white label inside a rounded border
+whose background is the drawn-state fill and whose highlight background is that state's
+highlight fill. Return the pill's left edge."
   (let* ((label (fixture-session-name session))
-         (left (- right (+ (text-size pane label) 24))))
-    (with-output-as-presentation (pane session 'session-pill)
-      (let ((fill (state-fill (fixture-session-drawn-state session))))
-        (loop for top from 8 below 30 by 2
-              do (draw-rectangle* pane left top right (+ top 2) :filled t :ink fill)))
-      (draw-polygon* pane (list left 8 right 8 right 30 left 30)
-                     :closed t :filled nil :ink +gray80+)
-      (draw-text* pane label (+ left 12) 25 :ink +white+))
-    left))
+         (left (- right (+ (text-size pane label) 24)))
+         (state (fixture-session-drawn-state session)))
+    (if (eq *fixture-variant* :bordered-pills)
+        (let ((record (with-output-as-presentation (pane session 'session-pill)
+                        (surrounding-output-with-border
+                            (pane :shape :rounded :move-cursor nil
+                                  :background (state-fill state)
+                                  :highlight-background (state-highlight-fill state))
+                          (draw-text* pane label (+ left 12) 25 :ink +white+)))))
+          (bounding-rectangle-min-x record))
+        (progn
+          (with-output-as-presentation (pane session 'session-pill
+                                        :single-box (eq *fixture-variant* :single-box-pills))
+            (let ((fill (state-fill state)))
+              (loop for top from 8 below 30 by 2
+                    do (draw-rectangle* pane left top right (+ top 2) :filled t :ink fill)))
+            (draw-polygon* pane (list left 8 right 8 right 30 left 30)
+                           :closed t :filled nil :ink +gray80+)
+            (draw-text* pane label (+ left 12) 25 :ink +white+))
+          left))))
 
 (defun display-fixture-view (frame pane)
   "Draw the header pane of FRAME onto PANE as *FIXTURE-VARIANT* says.
@@ -187,6 +225,26 @@ its pill's fill."
         :states (list (list :session-pill
                             (list :attached :background "#5C421A")
                             (list :fenced :background "#802929")))))
+
+(defun call-with-fixture-pane (function &key (variant :clean) (frame 'fixture-view))
+  "Render FRAME's header pane drawn as VARIANT, 900 by 60, and call FUNCTION with the pane.
+Return FUNCTION's values; the frame and its port are gone afterwards."
+  (let ((*fixture-variant* variant))
+    (call-with-rendered-pane frame 'header
+                             (lambda (made pane)
+                               (declare (ignore made))
+                               (funcall function pane))
+                             :width 900 :height 60)))
+
+(defun fixture-presentations (pane)
+  "Return the presentations in PANE's output history, in painting order."
+  (let ((presentations '()))
+    (labels ((visit (record)
+               (if (presentationp record)
+                   (push record presentations)
+                   (map-over-output-records #'visit record))))
+      (map-over-output-records #'visit (stream-output-history pane)))
+    (nreverse presentations)))
 
 (defun render-fixture (&key (variant :clean) (frame 'fixture-view) render)
   "Return the snapshot of FRAME's header pane drawn as VARIANT.

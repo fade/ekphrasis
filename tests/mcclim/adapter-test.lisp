@@ -21,8 +21,20 @@
                 #:element-state
                 #:element-text
                 #:snapshot-elements)
-  (:import-from #:ekphrasis/mcclim)
+  (:import-from #:clim
+                #:bounding-rectangle*
+                #:presentation-object)
+  (:import-from #:ekphrasis/mcclim
+                #:capture-replay
+                #:exercise-feedback-state
+                #:resolve-ink)
   (:import-from #:ekphrasis/tests/mcclim/fixture
+                #:*attached-highlight-fill*
+                #:*fenced-highlight-fill*
+                #:call-with-fixture-pane
+                #:fixture-presentations
+                #:fixture-session-drawn-state
+                #:fixture-session-name
                 #:render-fixture))
 
 (in-package #:ekphrasis/tests/mcclim/adapter-test)
@@ -266,3 +278,159 @@ value."
                   (error (condition) (princ-to-string condition)))))
       (true (and text (search "SESSION-PILL" text)) "~A" text)
       (true (and text (search "\"attached\"" text)) "~A" text))))
+
+(defun primitive-union (primitives)
+  "Return the box (x1 y1 x2 y2) bounding the boxes of PRIMITIVES."
+  (loop for primitive in primitives
+        for (x1 y1 x2 y2) = (getf primitive :box)
+        minimize x1 into left
+        minimize y1 into top
+        maximize x2 into right
+        maximize y2 into bottom
+        finally (return (list left top right bottom))))
+
+(defun box-near-p (expected actual)
+  "True when the boxes EXPECTED and ACTUAL agree within 1 px on every coordinate."
+  (every (lambda (e a) (<= (abs (- e a)) 1)) expected actual))
+
+(defun presentation-box (presentation)
+  "Return PRESENTATION's bounding box with every coordinate rounded to an integer."
+  (mapcar #'round (multiple-value-list (bounding-rectangle* presentation))))
+
+(defun exercise-each-pill (variant function)
+  "Render the fixture header drawn as VARIANT and call FUNCTION on each pill, in painting order,
+with the pane, the presentation, and the two values EXERCISE-FEEDBACK-STATE returns for it."
+  (call-with-fixture-pane
+   (lambda (pane)
+     (dolist (presentation (fixture-presentations pane))
+       (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
+         (funcall function pane presentation added exercised))))
+   :variant variant))
+
+(define-test capture-replays-the-resting-drawing
+  "The clean header's replay draws, with integer boxes, each pill band as a filled rectangle 2 px
+tall inside its pill, and each label and the title as a text primitive."
+  (call-with-fixture-pane
+   (lambda (pane)
+     (let ((primitives (capture-replay pane)))
+       (true primitives)
+       (true (every (lambda (primitive) (every #'integerp (getf primitive :box))) primitives))
+       (is equal '("EKPHRASIS" "charlie" "bravo" "alpha")
+           (loop for primitive in primitives
+                 when (eq :text (getf primitive :shape))
+                   collect (getf primitive :text)))
+       (is equal '((814 15 870 28))
+           (loop for primitive in primitives
+                 when (equal "charlie" (getf primitive :text))
+                   collect (getf primitive :box)))
+       (dolist (presentation (fixture-presentations pane))
+         (destructuring-bind (left top right bottom) (presentation-box presentation)
+           (declare (ignore top bottom))
+           (is = 11 (count-if (lambda (primitive)
+                                (destructuring-bind (x1 y1 x2 y2) (getf primitive :box)
+                                  (and (eq :rectangle (getf primitive :shape))
+                                       (getf primitive :filled)
+                                       (= x1 left) (= x2 right) (= 2 (- y2 y1))
+                                       (<= 8 y1 28))))
+                              primitives)
+               "bands of the pill at ~A" left)))))))
+
+(define-test exercised-highlight-is-drawn-around-each-control
+  "Highlighting a default pill draws marks only within its box, all in the pane's white
+foreground, among them every band again: the per-part highlight fills each thin band."
+  (let ((pills 0))
+    (exercise-each-pill
+     :clean
+     (lambda (pane presentation added exercised)
+       (declare (ignore exercised))
+       (incf pills)
+       (let ((box (presentation-box presentation)))
+         (true added)
+         (true (box-near-p box (primitive-union added)) "union ~S" (primitive-union added))
+         (true (every (lambda (primitive)
+                        (colour-near-p *white* (resolve-ink (getf primitive :ink) pane)))
+                      added))
+         (is = 11 (count-if (lambda (primitive)
+                              (destructuring-bind (x1 y1 x2 y2) (getf primitive :box)
+                                (and (getf primitive :filled)
+                                     (= x1 (first box)) (= x2 (third box))
+                                     (= 2 (- y2 y1)))))
+                            added)))))
+    (is = 3 pills)))
+
+(define-test single-box-highlight-is-drawn
+  "Highlighting a single-box pill draws one 1 px frame round its box: four filled rectangles, each
+at most 1 px thick, in the pane's white foreground."
+  (let ((pills 0))
+    (exercise-each-pill
+     :single-box-pills
+     (lambda (pane presentation added exercised)
+       (declare (ignore exercised))
+       (incf pills)
+       (is = 4 (length added) "~S" added)
+       (true (every (lambda (primitive)
+                      (destructuring-bind (x1 y1 x2 y2) (getf primitive :box)
+                        (and (eq :rectangle (getf primitive :shape))
+                             (getf primitive :filled)
+                             (or (<= (- x2 x1) 1) (<= (- y2 y1) 1))
+                             (colour-near-p *white* (resolve-ink (getf primitive :ink) pane)))))
+                    added)
+             "~S" added)
+       (true (box-near-p (presentation-box presentation) (primitive-union added))
+             "union ~S" (primitive-union added))))
+    (is = 3 pills)))
+
+(define-test bordered-highlight-redraws-the-fill
+  "Highlighting a bordered pill redraws its background in the highlight fill over the pill's box,
+before its label; nothing frames or fills the label alone."
+  (let ((pills 0))
+    (exercise-each-pill
+     :bordered-pills
+     (lambda (pane presentation added exercised)
+       (incf pills)
+       (let* ((shade (resolve-ink (ecase (fixture-session-drawn-state
+                                          (presentation-object presentation))
+                                    (:attached *attached-highlight-fill*)
+                                    (:fenced *fenced-highlight-fill*))
+                                  pane))
+              (filled (remove-if-not (lambda (primitive)
+                                       (and (getf primitive :filled)
+                                            (colour-near-p shade (resolve-ink (getf primitive :ink)
+                                                                              pane))))
+                                     added))
+              (label (find (fixture-session-name (presentation-object presentation)) exercised
+                           :key (lambda (primitive) (getf primitive :text)) :test #'equal))
+              (label-position (position label exercised)))
+         (true filled "~S" added)
+         (true label)
+         (true (box-near-p (presentation-box presentation) (primitive-union filled))
+               "union ~S" (primitive-union filled))
+         (true (every (lambda (primitive) (< (getf primitive :position) label-position)) filled))
+         (false (find-if (lambda (primitive)
+                           (box-near-p (getf label :box) (getf primitive :box)))
+                         added)
+                "~S" added))))
+    (is = 3 pills)))
+
+(define-test feedback-state-is-restored
+  "Exercising a pill signals nothing, and exercising it again gives the same primitives, for the
+default, single-box, and bordered pills."
+  (dolist (variant '(:clean :single-box-pills :bordered-pills))
+    (call-with-fixture-pane
+     (lambda (pane)
+       (dolist (presentation (fixture-presentations pane))
+         (let ((first (handler-case (exercise-feedback-state pane presentation)
+                        (error (condition) condition))))
+           (false (typep first 'error) "~A: ~A" variant first)
+           (true (equalp first (exercise-feedback-state pane presentation)) "~A" variant))))
+     :variant variant)))
+
+(define-test resting-elements-unchanged-by-exercise
+  "The elements a render holds at rest are the same with highlight feedback exercised as without."
+  (dolist (variant '(:clean :single-box-pills :bordered-pills))
+    (flet ((resting (exercise)
+             (remove :highlighted
+                     (snapshot-elements (render-fixture :variant variant
+                                                        :render (list :exercise-feedback exercise)))
+                     :key #'element-state)))
+      (true (equalp (resting nil) (resting t)) "~A" variant))))
