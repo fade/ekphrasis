@@ -57,7 +57,8 @@
            #:render-fixture
            #:call-with-fixture-pane
            #:fixture-presentations
-           #:check-fixture))
+           #:check-fixture
+           #:fixture-battery))
 
 (in-package #:ekphrasis/tests/mcclim/fixture)
 
@@ -74,7 +75,9 @@
 :WRONG-STATE has bravo attached, and draws it so.
 :STATE-DRAWN-WRONGLY has bravo fenced but draws its pill attached.
 :SINGLE-BOX-PILLS presents each pill as single-box, so its highlight is one thin frame.
-:BORDERED-PILLS draws each pill as a label in a rounded border with a highlight background.")
+:BORDERED-PILLS draws each pill as a label in a rounded border with a highlight background.
+:COMBINED carries four defects at once: no charlie, bravo left of alpha, alpha fenced and drawn
+so, and the target box in black.")
 
 (define-presentation-type session-pill ())
 
@@ -103,7 +106,8 @@ The struct is named apart from the SESSION-PILL presentation type: both would de
   "Return the sessions the header shows for VARIANT, in visual order from left to right.
 :MISSING drops bravo; :RELABELLED names bravo \"brovo\"; :SWAPPED shows bravo first;
 :WRONG-STATE has bravo attached and drawn so; :STATE-DRAWN-WRONGLY has bravo fenced but drawn
-attached. Every other variant shows alpha attached, bravo fenced, and charlie attached."
+attached; :COMBINED shows bravo then alpha, both fenced, and no charlie. Every other variant
+shows alpha attached, bravo fenced, and charlie attached."
   (ecase variant
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
       :flipping-outline :single-box-pills :bordered-pills)
@@ -128,7 +132,10 @@ attached. Every other variant shows alpha attached, bravo fenced, and charlie at
     (:state-drawn-wrongly
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced :attached)
-           (make-fixture-session "charlie" :attached)))))
+           (make-fixture-session "charlie" :attached)))
+    (:combined
+     (list (make-fixture-session "bravo" :fenced)
+           (make-fixture-session "alpha" :fenced)))))
 
 (define-application-frame fixture-view ()
   ()
@@ -221,7 +228,7 @@ DARK-INK-FIXTURE-VIEW, and the box in white, except where the variant changes on
   (draw-rectangle* pane 300 10 380 40
                    :filled nil
                    :ink (case *fixture-variant*
-                          (:low-contrast-outline +black+)
+                          ((:low-contrast-outline :combined) +black+)
                           (:flipping-outline +flipping-ink+)
                           (t +white+))))
 
@@ -285,3 +292,37 @@ gives its own :STATE-FUNCTION, NIL included."
                       :render (append render
                                       (list :width 900 :height 60
                                             :state-function #'fixture-session-state)))))
+
+(defun fixture-battery ()
+  "Return every defect class's control and clean twins, each a plist judged against FIXTURE-SPEC.
+Each entry is (:CLASS class :CHECK check :MARK mark :CONTROL case :TWINS cases). CHECK is the
+finding check the control must yield as an error. MARK is NIL, or (kind state) naming the kind
+and state of the element that finding must name. A case is a plist (:FRAME frame :VARIANT variant
+:RENDER render) of CHECK-FIXTURE arguments. Resting classes are rendered with highlight feedback
+off; the interaction-only classes exercise it."
+  (let ((resting (list :exercise-feedback nil)))
+    (flet ((at-rest (variant)
+             (list :frame 'fixture-view :variant variant :render resting))
+           (exercised (variant &optional (frame 'fixture-view))
+             (list :frame frame :variant variant :render '())))
+      (list (list :class :missing :check :missing
+                  :control (at-rest :missing) :twins (list (at-rest :clean)))
+            (list :class :label :check :label
+                  :control (at-rest :relabelled) :twins (list (at-rest :clean)))
+            (list :class :order :check :order
+                  :control (at-rest :swapped) :twins (list (at-rest :clean)))
+            (list :class :state :check :state
+                  :control (at-rest :wrong-state) :twins (list (at-rest :clean)))
+            (list :class :state-appearance :check :state-appearance
+                  :control (at-rest :state-drawn-wrongly) :twins (list (at-rest :clean)))
+            (list :class :not-perceivable-text :check :contrast :mark '(:text nil)
+                  :control (at-rest :low-contrast-text) :twins (list (at-rest :clean)))
+            (list :class :not-perceivable-outline :check :contrast :mark '(:outline nil)
+                  :control (at-rest :low-contrast-outline) :twins (list (at-rest :clean)))
+            (list :class :interaction-only-not-perceivable :check :contrast
+                  :mark '(:outline :highlighted)
+                  :control (exercised :single-box-pills 'dark-ink-fixture-view)
+                  :twins (list (exercised :single-box-pills)))
+            (list :class :highlight-hides-label :check :contrast :mark '(:text :highlighted)
+                  :control (exercised :clean)
+                  :twins (list (exercised :single-box-pills) (exercised :bordered-pills)))))))

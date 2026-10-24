@@ -33,6 +33,7 @@
   (:import-from #:ekphrasis/tests/mcclim/fixture
                 #:check-fixture
                 #:dark-ink-fixture-view
+                #:fixture-battery
                 #:fixture-spec))
 
 (in-package #:ekphrasis/tests/mcclim/control-test)
@@ -258,3 +259,31 @@ the ratio of black on #14151D against 3.0. The same pills on the light-foregroun
           (is = 3.0 (finding-expected finding) "~A" report)))))
   (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :single-box-pills)
     (true (null findings) "clean twin: ~A" report)))
+
+(defun check-case (case)
+  "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
+fixture spec and return what CHECK-FIXTURE returns."
+  (check-fixture (fixture-spec) :frame (getf case :frame)
+                                :variant (getf case :variant)
+                                :render (getf case :render)))
+
+(define-test each-class-has-a-control-and-clean-twin
+  "Every defect class has a control that yields at least one error of its check, on an element of
+the kind and state the class names, and clean twins that yield no findings."
+  (dolist (entry (fixture-battery))
+    (destructuring-bind (&key class check mark control twins) entry
+      (multiple-value-bind (findings report snapshot) (check-case control)
+        (let ((found (remove-if-not
+                      (lambda (finding)
+                        (and (eq check (finding-check finding))
+                             (eq :error (finding-severity finding))
+                             (or (null mark)
+                                 (let ((element (found-element finding snapshot)))
+                                   (and element
+                                        (eq (first mark) (element-kind element))
+                                        (eq (second mark) (element-state element)))))))
+                      findings)))
+          (true found "~A control: ~A" class report)))
+      (dolist (twin twins)
+        (multiple-value-bind (findings report) (check-case twin)
+          (true (null findings) "~A twin ~S: ~A" class (getf twin :variant) report))))))
