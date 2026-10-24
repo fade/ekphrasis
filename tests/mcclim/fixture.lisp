@@ -172,10 +172,12 @@ RENDER is a plist of further SNAPSHOT-FRAME-PANE keyword arguments."
   (let ((*fixture-variant* variant))
     (apply #'snapshot-frame-pane frame 'header :width 900 :height 60 render)))
 
-(defun check-fixture (spec &key (variant :clean) (frame 'fixture-view) observers render)
+(defun check-fixture (spec &key (variant :clean) (frame 'fixture-view) observers render thresholds)
   "Judge FRAME's header pane drawn as VARIANT against SPEC and return what CHECK-FRAME-PANE returns.
-OBSERVERS are passed to the run; RENDER is a plist of further SNAPSHOT-FRAME-PANE arguments."
+OBSERVERS and THRESHOLDS are passed to the run; RENDER is a plist of further SNAPSHOT-FRAME-PANE
+arguments."
   (let ((*fixture-variant* variant))
     (check-frame-pane spec frame 'header
                       :observers observers
+                      :thresholds thresholds
                       :render (append render (list :width 900 :height 60)))))

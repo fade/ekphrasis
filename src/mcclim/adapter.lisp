@@ -253,10 +253,12 @@ and the port destroyed before returning, whether or not the render succeeds."
         (disown-frame (frame-manager frame) frame))
       (destroy-port port))))
 
-(defun check-frame-pane (spec frame-class pane-name &key observers render)
+(defun check-frame-pane (spec frame-class pane-name &key observers render thresholds)
   "Judge the pane PANE-NAME of a fresh FRAME-CLASS frame against SPEC, rendered headlessly.
-RENDER is a plist of SNAPSHOT-FRAME-PANE keyword arguments; OBSERVERS are passed to RUN-CHECK.
+RENDER is a plist of SNAPSHOT-FRAME-PANE keyword arguments; OBSERVERS and THRESHOLDS are passed
+to RUN-CHECK.
 Return what RUN-CHECK returns: the findings, the report string, and the snapshot."
   (run-check spec
              (lambda () (apply #'snapshot-frame-pane frame-class pane-name render))
-             :observers observers))
+             :observers observers
+             :thresholds thresholds))
