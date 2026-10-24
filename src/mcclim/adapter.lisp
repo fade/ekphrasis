@@ -412,7 +412,8 @@ LABEL's text over LABEL's box rounded to integers. Return NIL when no primitive 
   "Return the ink and background, as two values, the resting :TEXT element LABEL shows on the
 highlighted :FILL element FILL. ADDED are the added primitives EXERCISE-FEEDBACK-STATE returns;
 EXERCISED is the whole highlighted replay. LAYERS-BEFORE is a function of a position in
-EXERCISED returning the layers drawn before it, as RGB-BENEATH takes them, over BACKGROUND.
+EXERCISED returning the filled primitives EXERCISED draws before it, resting and added alike, as
+layers RGB-BENEATH takes over BACKGROUND, in that replay's own order.
 LABEL is judged by its last drawing in EXERCISED, as LAST-DRAWING-POSITION finds it: that text
 primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the layers
 drawn before it. A cover is an added filled primitive drawn after that drawing whose box
@@ -447,12 +448,12 @@ With no text primitive, LABEL's own ink shows on the fill's ink."
                       (setf ink rgb
                             under rgb))))))))))
 
-(defun feedback-elements (pane presentations resting layers background ink-resolver)
+(defun feedback-elements (pane presentations resting background ink-resolver)
   "Exercise the highlight of each presentation on PANE and return the elements it adds.
 PRESENTATIONS is an alist (presentation . element) in painting order; RESTING the resting
-elements; LAYERS and BACKGROUND what WALK-RECORDS returned with them. Every element returned has
-state :HIGHLIGHTED, evidence :RECORDED, the presentation's element as container, and the next id
-after RESTING's. For each presentation, in order:
+elements; BACKGROUND the pane background WALK-RECORDS returned with them. Every element returned
+has state :HIGHLIGHTED, evidence :RECORDED, the presentation's element as container, and the next
+id after RESTING's. For each presentation, in order:
 - each added text primitive is a :TEXT element;
 - the other added primitives, grouped by resolved ink, are each one element over the group's
   union box: a :FILL when the group's filled primitives cover at least 90% of that box, otherwise
@@ -461,10 +462,11 @@ after RESTING's. For each presentation, in order:
   it again as a :TEXT element, its colours from LABEL-ON-FILL, unless its last drawing is an
   added text primitive, which already judges it.
 Inks resolve through INK-RESOLVER. A mark at position P of the highlighted replay is sampled, as
-WALK-RECORDS samples, against the layers drawn before it: the added filled primitives whose
-position is below P, most recently drawn first, each a layer over its box, of no fixed colour
-when its ink has none; then LAYERS, over BACKGROUND. A group element is sampled at its earliest
-primitive's position, so no group lies beneath itself."
+WALK-RECORDS samples, against the layers drawn before it in that replay: every filled primitive
+of the replay, resting or added, whose position is below P, most recently drawn first, over
+BACKGROUND. Each layer covers its primitive's box, a filled polygon included, and is of no fixed
+colour when its ink has none. A group element is sampled at its earliest primitive's position,
+so no group lies beneath itself."
   (let ((next-id (length resting))
         (made '()))
     (flet ((emit (&rest initargs)
@@ -474,12 +476,13 @@ primitive's position, so no group lies beneath itself."
                                                   initargs)))
                (push element made)
                element))
-           (added-layers (added)
-             (loop for primitive in added
+           (replay-layers (exercised)
+             (loop for primitive in exercised
+                   for position from 0
                    when (getf primitive :filled)
                      collect (multiple-value-bind (rgb alpha)
                                  (funcall ink-resolver (getf primitive :ink) pane)
-                               (list (getf primitive :position)
+                               (list position
                                      (apply #'make-rectangle* (getf primitive :box))
                                      rgb
                                      (if rgb (or alpha 1) 1))))))
@@ -487,9 +490,9 @@ primitive's position, so no group lies beneath itself."
             for container = (element-id owner)
             do (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
                  (let ((fills '())
-                       (drawn (added-layers added)))
+                       (drawn (replay-layers exercised)))
                    (labels ((layers-before (position)
-                              (let ((before layers))
+                              (let ((before '()))
                                 (loop for (at . layer) in drawn
                                       while (< at position)
                                       do (push layer before))
@@ -568,11 +571,12 @@ frame is disowned and the port destroyed before returning, whether or not the re
      (declare (ignore frame))
      (multiple-value-bind (elements layers background presentations)
          (walk-records (stream-output-history pane) pane ink-resolver state-function)
+       (declare (ignore layers))
        (make-snapshot :view (intern (string pane-name) :keyword)
                       :elements (if exercise-feedback
                                     (append elements
                                             (feedback-elements pane presentations elements
-                                                               layers background ink-resolver))
+                                                               background ink-resolver))
                                     elements))))
    :width width :height height :frame-initargs frame-initargs))
 
