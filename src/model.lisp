@@ -16,6 +16,7 @@
            #:element-state
            #:element-ink
            #:element-background
+           #:element-partly-unresolved
            #:element-evidence
            #:snapshot
            #:make-snapshot
@@ -55,6 +56,8 @@ BOX is the list (x1 y1 x2 y2) as recorded.
 CONTAINER is the id of the enclosing element, or NIL for the view itself.
 STATE is the state the client reports, or NIL.
 INK and BACKGROUND are sRGB lists (r g b) in [0,1], or NIL when the colour is not fixed.
+PARTLY-UNRESOLVED is true when BACKGROUND was taken from some sample points while others had
+nothing known beneath them, otherwise NIL.
 EVIDENCE is :RECORDED (read from the toolkit's records) or :SHOWN (read from an image)."
   (id 0 :type integer)
   (kind :text :type keyword)
@@ -64,6 +67,7 @@ EVIDENCE is :RECORDED (read from the toolkit's records) or :SHOWN (read from an 
   (state nil)
   (ink nil :type list)
   (background nil :type list)
+  (partly-unresolved nil)
   (evidence :recorded :type keyword))
 
 (defstruct (snapshot (:copier nil))
@@ -99,7 +103,8 @@ DETAIL is a plist of check-specific facts."
 
 (defun element-to-plist (element)
   "Return ELEMENT as a plist with one keyword key per slot, values as stored.
-Keys, in order: :ID :KIND :TEXT :BOX :CONTAINER :STATE :INK :BACKGROUND :EVIDENCE."
+Keys, in order: :ID :KIND :TEXT :BOX :CONTAINER :STATE :INK :BACKGROUND :PARTLY-UNRESOLVED
+:EVIDENCE."
   (list :id (element-id element)
         :kind (element-kind element)
         :text (element-text element)
@@ -108,6 +113,7 @@ Keys, in order: :ID :KIND :TEXT :BOX :CONTAINER :STATE :INK :BACKGROUND :EVIDENC
         :state (element-state element)
         :ink (element-ink element)
         :background (element-background element)
+        :partly-unresolved (element-partly-unresolved element)
         :evidence (element-evidence element)))
 
 (defun plist-to-element (plist)

@@ -138,22 +138,26 @@ An opaque ink is RGB itself; a translucent one over no known background is NIL."
         (t nil)))
 
 (defun sample-element (kind box rgb alpha layers background)
-  "Return the ink and background of an element of KIND and BOX drawn in RGB at ALPHA, as two values.
+  "Return the ink, background, and partly-unresolved flag of an element of KIND and BOX drawn in
+RGB at ALPHA, as three values.
 Each sample point takes what lies beneath it under LAYERS over BACKGROUND, and the ink as it shows
-there; the point with the lowest contrast ratio wins, the first point when no ratio is known.
-When any sample point has nothing known beneath it, the background is NIL and the ink is what
-INK-OVER gives over no background: RGB when opaque, NIL when translucent.
-With RGB NIL, return NIL and what lies beneath the first sample point."
+there. Only points with something known beneath them are judged: of those, the point with the
+lowest contrast ratio wins, the first one when no ratio is known. The third value is true when
+some other sample point had nothing known beneath it.
+When no sample point has anything known beneath it, the background is NIL, the ink is what
+INK-OVER gives over no background (RGB when opaque, NIL when translucent), and the third value is
+NIL. With RGB NIL, return NIL, what lies beneath the first sample point, and NIL."
   (let ((points (sample-points kind box)))
     (flet ((beneath (point)
              (rgb-beneath (car point) (cdr point) layers background)))
       (if (null rgb)
-          (values nil (beneath (first points)))
-          (let ((unders (mapcar #'beneath points)))
-            (if (member nil unders)
-                (values (ink-over rgb alpha nil) nil)
+          (values nil (beneath (first points)) nil)
+          (let* ((unders (mapcar #'beneath points))
+                 (known (remove nil unders)))
+            (if (null known)
+                (values (ink-over rgb alpha nil) nil nil)
                 (let (best-ink best-background best-ratio)
-                  (loop for under in unders
+                  (loop for under in known
                         for firstp = t then nil
                         for ink = (ink-over rgb alpha under)
                         for ratio = (and ink (contrast-ratio ink under))
@@ -162,7 +166,8 @@ With RGB NIL, return NIL and what lies beneath the first sample point."
                           do (setf best-ink ink
                                    best-background under
                                    best-ratio ratio))
-                  (values best-ink best-background))))))))
+                  (values best-ink best-background
+                          (and (member nil unders) t)))))))))
 
 (defun fill-region (record kind)
   "Return the region a filled shape RECORD of KIND covers.
@@ -199,8 +204,10 @@ with no ink. Other records are descended without an element.
 INK-RESOLVER is called as RESOLVE-INK is, on every record ink and on PANE's background. Each
 element's background is what lies beneath its sample points: the topmost earlier :FILL whose
 region contains the point, else PANE's background. A :FILL of no fixed colour hides what lies
-beneath it, so an element with a sample point on one has background NIL. A translucent ink is
-stored composited over that background; an :OUTLINE keeps its lowest-contrast sample."
+beneath it. An element is judged on its sample points with something known beneath them, as
+SAMPLE-ELEMENT gives: it is partly unresolved when some other point lies on such a fill, and has
+background NIL when every point does. A translucent ink is stored composited over that
+background; an :OUTLINE keeps its lowest-contrast known sample."
   (let ((elements '())
         (presentations '())
         (layers '())
@@ -223,9 +230,11 @@ stored composited over that background; an :OUTLINE keeps its lowest-contrast sa
                  element))
              (emit-drawn (record kind container &rest initargs)
                (multiple-value-bind (rgb alpha) (record-ink record)
-                 (multiple-value-bind (ink under)
+                 (multiple-value-bind (ink under partly-unresolved)
                      (sample-element kind (record-box record) rgb alpha layers background)
-                   (apply #'emit record kind container :ink ink :background under initargs))))
+                   (apply #'emit record kind container
+                          :ink ink :background under :partly-unresolved partly-unresolved
+                          initargs))))
              (visit-presentation (record container)
                (let* ((element (emit record (presentation-kind record) container
                                      :state (reported-state state-function record)))
@@ -466,7 +475,8 @@ WALK-RECORDS samples, against the layers drawn before it in that replay: every f
 of the replay, resting or added, whose position is below P, most recently drawn first, over
 BACKGROUND. Each layer covers its primitive's box, a filled polygon included, and is of no fixed
 colour when its ink has none. A group element is sampled at its earliest primitive's position,
-so no group lies beneath itself."
+so no group lies beneath itself. Each added text element and each group element is partly
+unresolved as SAMPLE-ELEMENT reports it; a re-judged label never is."
   (let ((next-id (length resting))
         (made '()))
     (flet ((emit (&rest initargs)
@@ -505,12 +515,13 @@ so no group lies beneath itself."
                        (when (eq :text (getf primitive :shape))
                          (multiple-value-bind (rgb alpha)
                              (funcall ink-resolver (getf primitive :ink) pane)
-                           (destructuring-bind (ink under)
+                           (destructuring-bind (ink under partly-unresolved)
                                (sampled :text (getf primitive :box) rgb (or alpha 1)
                                         (getf primitive :position))
                              (emit :kind :text :text (getf primitive :text)
                                    :box (getf primitive :box) :container container
-                                   :ink ink :background under)))))
+                                   :ink ink :background under
+                                   :partly-unresolved partly-unresolved)))))
                      (loop for (rgb alpha primitives)
                              in (group-by-ink (remove :text added
                                                       :key (lambda (primitive)
@@ -525,10 +536,11 @@ so no group lies beneath itself."
                            for earliest = (reduce #'min primitives
                                                   :key (lambda (primitive)
                                                          (getf primitive :position)))
-                           do (destructuring-bind (ink under)
+                           do (destructuring-bind (ink under partly-unresolved)
                                   (sampled kind box rgb alpha earliest)
                                 (let ((element (emit :kind kind :box box :container container
-                                                     :ink ink :background under)))
+                                                     :ink ink :background under
+                                                     :partly-unresolved partly-unresolved)))
                                   (when (eq kind :fill)
                                     (push (cons element primitives) fills)))))
                      (dolist (label resting)
