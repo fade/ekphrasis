@@ -327,6 +327,59 @@ has a line ending the same way with no label clause."
           (true (ends-with-p ", only when highlighted" line) "~A" line)
           (false (search "label" line) "~A" line))))))
 
+(define-test redrawn-label-is-judged-as-last-drawn
+  "A label the highlight redraws over its own fill is judged once, as last drawn. The
+redrawn-label pills yield no findings, each pill's one highlighted text in its drawn-state fill
+on white. The flipping-highlight pills yield one :UNRESOLVED-INK warning per pill, on that pill's
+one highlighted text, unresolved in its background, and nothing that fails."
+  (flet ((pills (snapshot)
+           (remove :session-pill (snapshot-elements snapshot)
+                   :key #'element-kind :test-not #'eq))
+         (highlighted-texts (pill snapshot)
+           (remove-if-not (lambda (element)
+                            (and (eq :text (element-kind element))
+                                 (eq :highlighted (element-state element))
+                                 (eql (element-id pill) (element-container element))))
+                          (snapshot-elements snapshot)))
+         (state-fill-p (rgb)
+           (and rgb
+                (or (rgb-match-p (parse-rgb "#5C421A") rgb)
+                    (rgb-match-p (parse-rgb "#802929") rgb)))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :redrawn-label-pills)
+      (true (null findings) "redrawn: ~A" report)
+      (dolist (pill (pills snapshot))
+        (let ((texts (highlighted-texts pill snapshot)))
+          (is = 1 (length texts) "redrawn ~A: ~A" (element-text pill) report)
+          (let ((text (first texts)))
+            (when text
+              (is string= (element-text pill) (element-text text))
+              (true (state-fill-p (element-ink text))
+                    "~A ink ~S" (element-text pill) (element-ink text))
+              (true (and (element-background text)
+                         (rgb-match-p '(1 1 1) (element-background text)))
+                    "~A background ~S" (element-text pill) (element-background text)))))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :flipping-highlight-pills)
+      (is = 3 (length findings) "flipping: ~A" report)
+      (is equal '() (failing-findings findings) "flipping: ~A" report)
+      (let ((containers '()))
+        (dolist (finding findings)
+          (let ((text (found-element finding snapshot)))
+            (is eq :unresolved-ink (finding-check finding) "~A" report)
+            (is eq :warning (finding-severity finding) "~A" report)
+            (true (member :background (getf (finding-detail finding) :unresolved))
+                  "~A" report)
+            (true (and text
+                       (eq :text (element-kind text))
+                       (eq :highlighted (element-state text)))
+                  "~A" report)
+            (when text (pushnew (element-container text) containers))))
+        (is = 3 (length containers) "flipping containers: ~A" report))
+      (dolist (pill (pills snapshot))
+        (is = 1 (length (highlighted-texts pill snapshot))
+            "flipping ~A: ~A" (element-text pill) report)))))
+
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
 fixture spec and return what CHECK-FIXTURE returns."
