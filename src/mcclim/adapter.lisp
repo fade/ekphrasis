@@ -21,15 +21,25 @@
                 #:map-over-output-records
                 #:pane-background
                 #:pane-foreground
+                #:presentation-type
+                #:presentation-type-name
+                #:presentationp
                 #:redisplay-frame-pane
                 #:stream-output-history)
   (:import-from #:ekphrasis
+                #:element-background
+                #:element-id
+                #:element-ink
+                #:element-kind
+                #:element-text
                 #:make-element
                 #:make-snapshot
                 #:run-check)
   (:import-from #:ekphrasis/src/mcclim/medium
                 #:make-fixed-width-port)
   (:import-from #:ekphrasis/src/mcclim/records
+                #:shape-record-filled-p
+                #:shape-record-kind
                 #:text-record-p
                 #:text-record-string)
   (:export #:snapshot-frame-pane
@@ -54,24 +64,68 @@ colour (a flipping ink, a pattern, or an image)."
            (values (list r g b) alpha)))
         (t nil)))
 
+(defun presentation-kind (presentation)
+  "Return PRESENTATION's type name as a keyword: :SESSION-PILL for type SESSION-PILL."
+  (intern (symbol-name (presentation-type-name (presentation-type presentation))) :keyword))
+
 (defun walk-records (history pane)
-  "Return elements for the records under HISTORY, depth first, numbered from 1 in painting order."
+  "Return elements for the records under HISTORY, depth first, numbered from 1 in painting order.
+A presentation becomes an element of its type, numbered before its descendants, which name it as
+their container; its text joins its text descendants' strings with one space, and its ink and
+background are its first text descendant's. A text record becomes a :TEXT element. A shape record
+becomes a :FILL element when filled, otherwise an :OUTLINE element; a pattern is a :FILL with no
+ink. Other records are descended without an element. Every background is PANE's background."
   (let ((elements '())
         (next-id 0)
         (background (resolve-ink +background-ink+ pane)))
-    (labels ((visit (record)
-               (if (text-record-p record)
-                   (push (make-element :id (incf next-id)
-                                       :kind :text
-                                       :text (text-record-string record)
-                                       :box (multiple-value-list (bounding-rectangle* record))
-                                       :container nil
-                                       :ink (values (resolve-ink
-                                                     (displayed-output-record-ink record) pane))
-                                       :background background)
-                         elements)
-                   (map-over-output-records #'visit record))))
-      (map-over-output-records #'visit history))
+    (labels ((record-box (record)
+               (multiple-value-list (bounding-rectangle* record)))
+             (record-ink (record)
+               (values (resolve-ink (displayed-output-record-ink record) pane)))
+             (emit (record kind container &rest initargs)
+               (let ((element (apply #'make-element
+                                     :id (incf next-id)
+                                     :kind kind
+                                     :box (record-box record)
+                                     :container container
+                                     :background background
+                                     initargs)))
+                 (push element elements)
+                 element))
+             (visit-presentation (record container)
+               (let* ((element (emit record (presentation-kind record) container))
+                      (before elements)
+                      (id (element-id element)))
+                 (map-over-output-records (lambda (child) (visit child id)) record)
+                 (let ((texts (remove :text (reverse (ldiff elements before))
+                                      :key #'element-kind :test-not #'eq)))
+                   (setf (element-text element)
+                         (when texts
+                           (format nil "~{~A~^ ~}" (mapcar #'element-text texts)))
+                         (element-ink element) (and texts (element-ink (first texts)))
+                         (element-background element)
+                         (and texts (element-background (first texts)))))))
+             (visit-shape (record kind container)
+               (cond ((eq kind :pattern)
+                      (emit record :fill container :ink nil))
+                     ((shape-record-filled-p record)
+                      (emit record :fill container :ink (record-ink record)))
+                     (t
+                      (emit record :outline container :ink (record-ink record)))))
+             (visit (record container)
+               (let ((shape (shape-record-kind record)))
+                 (cond ((presentationp record)
+                        (visit-presentation record container))
+                       ((text-record-p record)
+                        (emit record :text container
+                              :text (text-record-string record)
+                              :ink (record-ink record)))
+                       (shape
+                        (visit-shape record shape container))
+                       (t
+                        (map-over-output-records (lambda (child) (visit child container))
+                                                 record))))))
+      (map-over-output-records (lambda (record) (visit record nil)) history))
     (nreverse elements)))
 
 (defun snapshot-frame-pane (frame-class pane-name &key (width 900) (height 60) frame-initargs)

@@ -55,7 +55,8 @@
                "ekphrasis/mcclim"
                "ekphrasis/tests/mcclim/acceptance-test"
                "ekphrasis/tests/mcclim/medium-test"
-               "ekphrasis/tests/mcclim/records-test")
+               "ekphrasis/tests/mcclim/records-test"
+               "ekphrasis/tests/mcclim/adapter-test")
   :perform (test-op (o c)
                     (declare (ignore o))
                     (let* ((test-package-names
