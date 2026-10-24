@@ -417,9 +417,12 @@ LABEL is judged by its last drawing in EXERCISED, as LAST-DRAWING-POSITION finds
 primitive, in its ink as INK-RESOLVER gives it, is sampled over LABEL's box against the layers
 drawn before it. A cover is an added filled primitive drawn after that drawing whose box
 contains the centre of LABEL's box, edges included; a primitive that only overlaps LABEL's box
-covers nothing. Each cover, in drawing order, sets both ink and background to its own colour,
-NIL when its ink has no fixed colour. With no text primitive, LABEL's own ink shows on the
-fill's ink."
+covers nothing. Each cover, in drawing order, applies by its ink as INK-RESOLVER gives it:
+- an opaque colour sets both ink and background to that colour;
+- a translucent colour replaces each of ink and background by that colour composited over it at
+  its alpha, a NIL staying NIL;
+- an ink of no fixed colour sets both to NIL.
+With no text primitive, LABEL's own ink shows on the fill's ink."
   (let* ((centre (first (sample-points :text (element-box label))))
          (text-position (last-drawing-position label exercised))
          (text (and text-position (nth text-position exercised))))
@@ -436,9 +439,13 @@ fill's ink."
                                 (funcall layers-before text-position) background))
             (dolist (primitive added (values ink under))
               (when (covers-label-p primitive)
-                (let ((rgb (funcall ink-resolver (getf primitive :ink) pane)))
-                  (setf ink rgb
-                        under rgb)))))))))
+                (multiple-value-bind (rgb alpha)
+                    (funcall ink-resolver (getf primitive :ink) pane)
+                  (if (and rgb alpha (< alpha 1))
+                      (setf ink (and ink (composite-over rgb alpha ink))
+                            under (and under (composite-over rgb alpha under)))
+                      (setf ink rgb
+                            under rgb))))))))))
 
 (defun feedback-elements (pane presentations resting layers background ink-resolver)
   "Exercise the highlight of each presentation on PANE and return the elements it adds.
