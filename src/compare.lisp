@@ -12,6 +12,7 @@
                 #:element-id
                 #:element-ink
                 #:element-kind
+                #:element-state
                 #:element-text
                 #:make-finding
                 #:snapshot-elements
@@ -21,14 +22,18 @@
                 #:spec-contrast
                 #:spec-elements
                 #:spec-order
+                #:spec-states
                 #:spec-element-id
                 #:spec-element-kind
-                #:spec-element-label)
+                #:spec-element-label
+                #:spec-element-state
+                #:spec-element-states)
   (:import-from #:ekphrasis/src/contrast
                 #:below-threshold-p
                 #:contrast-ratio
                 #:resolve-thresholds)
   (:import-from #:ekphrasis/src/rgb
+                #:rgb-match-p
                 #:rgb-to-hex)
   (:export #:compare-snapshot))
 
@@ -132,6 +137,68 @@ when nothing stands for it; and the drawn elements left unpaired, in painting or
                 :measured (element-text element)
                 :evidence (list :recorded)
                 :detail (list :kind (element-kind element))))
+
+(defun looks-like-p (element appearance)
+  "True when ELEMENT's colours match APPEARANCE, a plist (:INK rgb :BACKGROUND rgb) holding
+either key or both: each colour given matches ELEMENT's by RGB-MATCH-P. An element with no
+fixed colour where one is given does not match."
+  (loop for (key rgb) on appearance by #'cddr
+        for colour = (if (eq key :ink) (element-ink element) (element-background element))
+        always (and colour (rgb-match-p colour rgb))))
+
+(defun drawn-state (element kind states)
+  "Return the state ELEMENT's drawing shows, judged against the appearances STATES declares for
+KIND. STATES is a parsed :STATES alist.
+Return the first declared state with an appearance that ELEMENT looks like; :UNKNOWN when KIND
+declares appearances and none matches; NIL when KIND declares no appearance."
+  (let ((shown (remove-if-not #'cdr (cdr (assoc kind states)))))
+    (when shown
+      (or (car (find-if (lambda (state) (looks-like-p element (cdr state))) shown))
+          :unknown))))
+
+(defun hex-or-nil (rgb)
+  "Return the sRGB list RGB as \"#RRGGBB\", or NIL when RGB is NIL."
+  (and rgb (rgb-to-hex rgb)))
+
+(defun state-findings (spec-element element states view)
+  "Return the findings ELEMENT in VIEW earns for state as SPEC-ELEMENT's counterpart, in order:
+a :STATE error, then a :STATE-APPEARANCE error, either or both absent.
+STATES is a parsed :STATES alist. Return NIL when SPEC-ELEMENT names neither :STATE nor :STATES.
+The state judged is the one the client reports, or, with no report, the one the drawing
+shows. A :STATE error is made when that state is not the expected :STATE, or, with
+only :STATES given, not among them. A :STATE-APPEARANCE error is made when the client reports
+one state and the drawing shows another."
+  (let ((expected (spec-element-state spec-element))
+        (allowed (spec-element-states spec-element)))
+    (when (or expected allowed)
+      (let* ((reported (element-state element))
+             (drawn (drawn-state element (spec-element-kind spec-element) states))
+             (actual (or reported drawn))
+             (detail (list :reported reported
+                           :drawn drawn
+                           :ink (hex-or-nil (element-ink element))
+                           :background (hex-or-nil (element-background element))
+                           :kind (spec-element-kind spec-element))))
+        (flet ((state-finding (check expected measured)
+                 (make-finding :check check
+                               :severity :error
+                               :spec-id (spec-element-id spec-element)
+                               :view view
+                               :container (element-container element)
+                               :element-id (element-id element)
+                               :box (element-box element)
+                               :expected expected
+                               :measured measured
+                               :evidence (list :recorded)
+                               :detail detail)))
+          (append
+           (cond (expected
+                  (unless (eq actual expected)
+                    (list (state-finding :state expected actual))))
+                 ((not (member actual allowed :test #'eq))
+                  (list (state-finding :state allowed actual))))
+           (when (and reported drawn (not (eq reported drawn)))
+             (list (state-finding :state-appearance reported drawn)))))))))
 
 (defun kept-in-order (positions)
   "Return the indices into POSITIONS, a list of distinct integers, of one longest increasing
@@ -288,7 +355,9 @@ SPEC is a spec record or spec data; it is parsed with PARSE-SPEC, which may sign
 Presence is judged over the elements drawn on the view itself, outside any container: a spec
 element nothing stands for is :MISSING; one stood for by an element with other text is a :LABEL
 error; an unpaired element of a kind the spec names is an :UNEXPECTED warning. Kinds the spec
-does not name are not judged for presence.
+does not name are not judged for presence. A paired element whose spec element names :STATE or
+:STATES is judged for state with it: a :STATE error when it is in the wrong state, and a
+:STATE-APPEARANCE error when the state the client reports is not the one its drawing shows.
 Order is judged next: each :ORDER group whose drawn members sit out of the expected sequence
 along its axis gives one :ORDER error, judged on drawn position and never on painting order.
 Perceivability is judged over every element, in painting order: a :TEXT or :OUTLINE mark below
@@ -320,7 +389,10 @@ ON-FINDING, when non-NIL, is called with each finding as it is made."
                         (push (cons element (spec-element-id spec-element)) stood-for)
                         (unless (label-matches-p (spec-element-label spec-element)
                                                  (element-text element))
-                          (emit (label-finding spec-element element view))))))
+                          (emit (label-finding spec-element element view)))
+                        (dolist (finding (state-findings spec-element element
+                                                         (spec-states spec) view))
+                          (emit finding)))))
         (dolist (element unpaired)
           (when (member (element-kind element) named-kinds :test #'eq)
             (emit (unexpected-finding element view))))

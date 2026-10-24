@@ -14,13 +14,17 @@
                 #:malformed-spec
                 #:malformed-spec-clause
                 #:malformed-spec-reason
+                #:parse-rgb
                 #:parse-spec
                 #:spec-contrast
                 #:spec-elements
                 #:spec-order
+                #:spec-states
                 #:spec-element-id
                 #:spec-element-kind
                 #:spec-element-label
+                #:spec-element-state
+                #:spec-element-states
                 #:spec-view))
 
 (in-package #:ekphrasis/tests/spec-test)
@@ -179,3 +183,67 @@ list is named itself."
   (let ((order "alpha bravo"))
     (names-clause (list :view :header :elements (pill-clauses) :order order)
                   order "order a string")))
+
+(defun pill-states ()
+  "Return a fresh :STATES value declaring :ATTACHED and :FENCED session pills by background."
+  (list (list :session-pill
+              (list :attached :background "#5C421A")
+              (list :fenced :background "#802929"))))
+
+(define-test states-clause-parses
+  "A :STATES clause is kept per kind, its states in order with colours parsed to sRGB lists;
+element :STATE and :STATES are kept, whether :STATES precedes or follows :ELEMENTS."
+  (let* ((spec (parse-spec (list :states (pill-states)
+                                 :view :header
+                                 :elements (list (list :alpha :kind :session-pill
+                                                       :label "alpha" :state :attached)
+                                                 (list :bravo :kind :session-pill
+                                                       :label "bravo"
+                                                       :states (list :attached :fenced))))))
+         (pill (cdr (assoc :session-pill (spec-states spec)))))
+    (is equal '(:attached :fenced) (mapcar #'car pill))
+    (is equal (list :background (parse-rgb "#5C421A")) (cdr (assoc :attached pill)))
+    (is equal (list :background (parse-rgb "#802929")) (cdr (assoc :fenced pill)))
+    (is eq :attached (spec-element-state (first (spec-elements spec))))
+    (false (spec-element-states (first (spec-elements spec))))
+    (false (spec-element-state (second (spec-elements spec))))
+    (is equal '(:attached :fenced) (spec-element-states (second (spec-elements spec)))))
+  (false (spec-states (parse-spec (list :view :header :elements (pill-clauses))))))
+
+(define-test malformed-states-are-named
+  "Each malformed :STATES entry is named by the condition: an unparsable colour, an unknown
+appearance key, and a repeated state name name the state entry; a kind that is not a keyword
+names the kind entry; a :STATES value that is not a list is named itself."
+  (flet ((states-form (states)
+           (list :view :header :elements (pill-clauses) :states states)))
+    (dolist (entry (list (list "unparsable colour" (list :fenced :background "#80292"))
+                         (list "unknown key :border" (list :fenced :border "#802929"))))
+      (destructuring-bind (what state-entry) entry
+        (names-clause (states-form (list (list :session-pill
+                                                (list :attached :background "#5C421A")
+                                                state-entry)))
+                      state-entry what)))
+    (let ((again (list :attached :background "#802929")))
+      (names-clause (states-form (list (list :session-pill
+                                              (list :attached :background "#5C421A")
+                                              again)))
+                    again "repeated :attached"))
+    (let ((kind-entry (list "session-pill" (list :attached :background "#5C421A"))))
+      (names-clause (states-form (list kind-entry)) kind-entry "kind a string"))
+    (let ((states "attached"))
+      (names-clause (states-form states) states "states a string"))))
+
+(define-test undeclared-state-is-named
+  "An element whose :STATE or :STATES names a state not declared for its kind names the element
+clause, as does one whose :STATE is not a keyword."
+  (dolist (entry (list (list ":state :sleeping"
+                             (list :bravo :kind :session-pill :state :sleeping))
+                       (list ":states with :sleeping"
+                             (list :bravo :kind :session-pill :states (list :fenced :sleeping)))
+                       (list ":state a string"
+                             (list :bravo :kind :session-pill :state "fenced"))))
+    (destructuring-bind (what clause) entry
+      (names-clause (list :view :header
+                          :elements (list (list :alpha :kind :session-pill) clause)
+                          :states (pill-states))
+                    clause what))))

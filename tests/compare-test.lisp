@@ -28,7 +28,8 @@
                 #:make-element
                 #:make-snapshot
                 #:make-spec
-                #:make-spec-element))
+                #:make-spec-element
+                #:parse-rgb))
 
 (in-package #:ekphrasis/tests/compare-test)
 
@@ -317,3 +318,106 @@ in order whatever the left edges, and one with charlie on top is not."
     (is equal '(:charlie :alpha :bravo) (finding-measured (first findings)))
     (is eq :top-to-bottom (getf (finding-detail (first findings)) :axis))
     (is equal '(:charlie) (getf (finding-detail (first findings)) :displaced))))
+
+(defun stated-spec (&key state states (appearances t))
+  "Return a spec naming one session pill, bravo, expected in STATE or among STATES.
+With APPEARANCES, :ATTACHED looks like background #5C421A and :FENCED like #802929; without,
+both states are declared with no appearance."
+  (list :view :header
+        :elements (list (append (list :bravo :kind :session-pill :label "bravo")
+                                (when state (list :state state))
+                                (when states (list :states states))))
+        :states (list (if appearances
+                          (list :session-pill
+                                (list :attached :background "#5C421A")
+                                (list :fenced :background "#802929"))
+                          (list :session-pill (list :attached) (list :fenced))))))
+
+(defun stated-pill (&key reported (background "#5C421A") (ink "#FFFFFF"))
+  "Return a header snapshot holding bravo, element 16, the client reporting state REPORTED and
+the pill drawn in INK on BACKGROUND, both hex strings or NIL."
+  (make-snapshot
+   :view :header
+   :elements (list (make-element :id 16 :kind :session-pill :text "bravo"
+                                 :box (list 709 8 773 30)
+                                 :state reported
+                                 :ink (and ink (parse-rgb ink))
+                                 :background (and background (parse-rgb background))))))
+
+(define-test wrong-state-is-found
+  "Bravo expected fenced, reported attached, and drawn attached gives one located :STATE error
+and no :STATE-APPEARANCE error."
+  (let* ((findings (compare-snapshot (stated-pill :reported :attached)
+                                     (stated-spec :state :fenced)))
+         (finding (first findings))
+         (detail (finding-detail finding)))
+    (is equal '(:state) (mapcar #'finding-check findings))
+    (is eq :error (finding-severity finding))
+    (is eq :bravo (finding-spec-id finding))
+    (is = 16 (finding-element-id finding))
+    (is equal '(709 8 773 30) (finding-box finding))
+    (is eq :fenced (finding-expected finding))
+    (is eq :attached (finding-measured finding))
+    (is eq :attached (getf detail :reported))
+    (is eq :attached (getf detail :drawn))
+    (is string= "#5C421A" (getf detail :background))
+    (is string= "#FFFFFF" (getf detail :ink))))
+
+(define-test state-drawn-wrongly-is-its-own-finding
+  "Bravo expected and reported fenced but drawn attached gives one :STATE-APPEARANCE error, the
+reported state expected and the drawn one measured, and no :STATE error."
+  (let* ((findings (compare-snapshot (stated-pill :reported :fenced)
+                                     (stated-spec :state :fenced)))
+         (finding (first findings)))
+    (is equal '(:state-appearance) (mapcar #'finding-check findings))
+    (is eq :error (finding-severity finding))
+    (is eq :bravo (finding-spec-id finding))
+    (is = 16 (finding-element-id finding))
+    (is eq :fenced (finding-expected finding))
+    (is eq :attached (finding-measured finding))
+    (is eq :fenced (getf (finding-detail finding) :reported))
+    (is eq :attached (getf (finding-detail finding) :drawn))))
+
+(define-test drawn-state-judged-without-report
+  "With no state reported, bravo expected fenced and drawn attached is judged from its drawing:
+one :STATE error measuring attached."
+  (let* ((findings (compare-snapshot (stated-pill) (stated-spec :state :fenced)))
+         (finding (first findings)))
+    (is equal '(:state) (mapcar #'finding-check findings))
+    (is eq :fenced (finding-expected finding))
+    (is eq :attached (finding-measured finding))
+    (true (member :reported (finding-detail finding)))
+    (false (getf (finding-detail finding) :reported))
+    (is eq :attached (getf (finding-detail finding) :drawn))))
+
+(define-test unknown-appearance-is-measured-unknown
+  "A pill whose colours match no declared appearance measures :UNKNOWN, and the finding quotes
+the drawn ink and background."
+  (let* ((findings (compare-snapshot (stated-pill :background "#123456")
+                                     (stated-spec :state :fenced)))
+         (detail (finding-detail (first findings))))
+    (is equal '(:state) (mapcar #'finding-check findings))
+    (is eq :unknown (finding-measured (first findings)))
+    (is eq :unknown (getf detail :drawn))
+    (is string= "#FFFFFF" (getf detail :ink))
+    (is string= "#123456" (getf detail :background))))
+
+(define-test allowed-states-are-honoured
+  "With only :STATES given, a pill drawn in an allowed state passes, and one whose colours match
+neither gives a :STATE error expecting the allowed list."
+  (let ((spec (stated-spec :states (list :attached :fenced))))
+    (is equal '() (compare-snapshot (stated-pill :background "#802929") spec))
+    (let ((findings (compare-snapshot (stated-pill :background "#123456") spec)))
+      (is equal '(:state) (mapcar #'finding-check findings))
+      (is equal '(:attached :fenced) (finding-expected (first findings)))
+      (is eq :unknown (finding-measured (first findings))))))
+
+(define-test no-state-evidence-is-a-finding
+  "A pill expected attached, with no state reported and no appearance declared for its kind,
+gives a :STATE error measuring NIL: nothing shows what state it is in."
+  (let ((findings (compare-snapshot (stated-pill)
+                                    (stated-spec :state :attached :appearances nil))))
+    (is equal '(:state) (mapcar #'finding-check findings))
+    (is eq :attached (finding-expected (first findings)))
+    (false (finding-measured (first findings)))
+    (false (getf (finding-detail (first findings)) :drawn))))

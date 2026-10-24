@@ -75,6 +75,13 @@ Return the string written when STREAM is NIL, otherwise NIL."
   "Return DESIGNATORS as a parenthesised list of lower-case names: \"(alpha bravo)\"."
   (format nil "(~{~A~^ ~})" (mapcar #'name-text designators)))
 
+(defun state-text (state)
+  "Return STATE in lower case: \"fenced\" for :FENCED, \"none\" for NIL, and \"one of (attached
+fenced)\" for a list of allowed states."
+  (cond ((null state) "none")
+        ((listp state) (format nil "one of ~A" (names-text state)))
+        (t (name-text state))))
+
 (defun unresolved-text (unresolved)
   "Return what UNRESOLVED, a list of :INK and :BACKGROUND, says has no fixed colour:
 \"ink has no fixed colour\", or \"ink and background have no fixed colour\"."
@@ -117,6 +124,24 @@ Return the string written when STREAM is NIL, otherwise NIL."
                (names-text (finding-expected finding))
                (names-text (finding-measured finding))
                (names-text (getf (finding-detail finding) :displaced))))
+      (:state
+       (format out "~A (~A)~A in ~A: expected ~A, measured ~A (reported ~A, drawn ~A)"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (state-text (finding-expected finding))
+               (state-text (finding-measured finding))
+               (state-text (getf (finding-detail finding) :reported))
+               (state-text (getf (finding-detail finding) :drawn))))
+      (:state-appearance
+       (format out "~A (~A)~A in ~A: reported ~A, drawn as ~A"
+               (element-reference finding)
+               kind
+               (box-text (finding-box finding))
+               (where-text finding)
+               (state-text (getf (finding-detail finding) :reported))
+               (state-text (getf (finding-detail finding) :drawn))))
       (:contrast
        (format out "~A (~A)~A in ~A: ~,2F below ~,2F (ink ~A on ~A)"
                (element-reference finding)

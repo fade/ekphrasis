@@ -6,6 +6,8 @@
 
 (defpackage #:ekphrasis/src/spec
   (:use #:cl)
+  (:import-from #:ekphrasis/src/rgb
+                #:parse-rgb)
   (:export #:malformed-spec
            #:malformed-spec-clause
            #:malformed-spec-reason
@@ -63,10 +65,10 @@ STATE is the expected state, or NIL; STATES lists the states it may be in, or NI
   (state nil)
   (states nil))
 
-(defparameter *spec-keys* '(:view :elements :order :contrast)
+(defparameter *spec-keys* '(:view :elements :order :states :contrast)
   "The top-level keys a spec may hold.")
 
-(defparameter *element-keys* '(:kind :label)
+(defparameter *element-keys* '(:kind :label :state :states)
   "The keys an element clause may hold after its id.")
 
 (defun malformed (clause reason)
@@ -105,9 +107,12 @@ PLIST is a proper list of even length."
                     (push key seen))))))
 
 (defun parse-element-clause (clause)
-  "Validate one element clause (id :kind kind [:label label]) and return a spec-element.
+  "Validate one element clause (id :kind kind [:label label] [:state s] [:states (s ...)]) and
+return a spec-element.
 ID is a keyword; :KIND is required and a keyword; :LABEL is optional and a string, or NIL for an
-element with no text. Signal MALFORMED-SPEC naming CLAUSE when it is not well formed."
+element with no text. :STATE is the expected state, a keyword; :STATES lists the states the
+element may be in, as keywords. Whether those states are declared for the kind is checked by
+CHECK-ELEMENT-STATES. Signal MALFORMED-SPEC naming CLAUSE when it is not well formed."
   (cond ((null clause)
          (malformed clause "an element clause needs a keyword id"))
         ((not (and (consp clause) (proper-list-p clause)))
@@ -130,7 +135,14 @@ element with no text. Signal MALFORMED-SPEC naming CLAUSE when it is not well fo
       (let ((label (clause-value options :label)))
         (unless (or (null label) (stringp label))
           (malformed clause "element :label must be a string"))
-        (make-spec-element :id id :kind kind :label label)))))
+        (multiple-value-bind (state state-present) (clause-value options :state)
+          (when (and state-present (not (keywordp state)))
+            (malformed clause "element :state must be a keyword"))
+          (let ((states (clause-value options :states)))
+            (unless (and (proper-list-p states) (every #'keywordp states))
+              (malformed clause "element :states must be a proper list of keywords"))
+            (make-spec-element :id id :kind kind :label label
+                               :state state :states states)))))))
 
 (defparameter *contrast-keys* '(:text :non-text)
   "The keys a :CONTRAST clause may hold.")
@@ -181,18 +193,91 @@ ids the spec declares. Signal MALFORMED-SPEC naming CLAUSE when it is not a prop
   (dolist (group clause clause)
     (parse-order-group group ids)))
 
+(defparameter *appearance-keys* '(:ink :background)
+  "The keys a state's appearance may hold in a :STATES clause.")
+
+(defun parse-state-entry (entry)
+  "Validate one state entry (state [:ink colour] [:background colour]) and return
+(state . appearance), APPEARANCE a plist whose colours are sRGB lists.
+STATE is a keyword; each colour is anything PARSE-RGB accepts. Signal MALFORMED-SPEC naming
+ENTRY when it is not well formed."
+  (unless (and (consp entry) (proper-list-p entry))
+    (malformed entry "a state entry must be a proper list (state :ink colour :background colour)"))
+  (let ((state (first entry))
+        (appearance (rest entry)))
+    (unless (keywordp state)
+      (malformed entry "a state name must be a keyword"))
+    (unless (evenp (length appearance))
+      (malformed entry "a state's appearance must be a plist of even length"))
+    (multiple-value-bind (key problem) (first-bad-key appearance *appearance-keys*)
+      (case problem
+        (:unknown (malformed entry (format nil "unknown appearance key ~S" key)))
+        (:repeated (malformed entry (format nil "appearance key ~S appears twice" key)))))
+    (cons state
+          (loop for (key value) on appearance by #'cddr
+                for rgb = (parse-rgb value)
+                unless rgb
+                  do (malformed entry (format nil "appearance ~S is not a colour" key))
+                collect key
+                collect rgb))))
+
+(defun parse-states-clause (clause)
+  "Validate the value of a spec's :STATES key and return it as an alist from kind to a list of
+(state . appearance) in the order declared.
+CLAUSE is a proper list of kind entries (kind state-entry ...): KIND a keyword named by no
+earlier entry, followed by at least one state entry, each checked by PARSE-STATE-ENTRY, with
+state names distinct within the kind. Signal MALFORMED-SPEC naming CLAUSE when it is not a
+proper list, the kind entry at fault when its shape or kind is wrong, and the later state entry
+for a repeated state name."
+  (unless (proper-list-p clause)
+    (malformed clause "spec :states must be a proper list of kind entries"))
+  (let ((kinds '()))
+    (dolist (entry clause (nreverse kinds))
+      (unless (and (consp entry) (proper-list-p entry))
+        (malformed entry "a kind entry must be a proper list (kind (state ...) ...)"))
+      (let ((kind (first entry)))
+        (unless (keywordp kind)
+          (malformed entry "a kind entry's kind must be a keyword"))
+        (when (assoc kind kinds)
+          (malformed entry (format nil "kind ~S is given states twice" kind)))
+        (when (null (rest entry))
+          (malformed entry "a kind entry must declare at least one state"))
+        (let ((states '()))
+          (dolist (state-entry (rest entry))
+            (let ((state (parse-state-entry state-entry)))
+              (when (assoc (car state) states)
+                (malformed state-entry (format nil "state ~S is declared twice for ~S"
+                                               (car state) kind)))
+              (push state states)))
+          (push (cons kind (nreverse states)) kinds))))))
+
+(defun check-element-states (element clause states)
+  "Signal MALFORMED-SPEC naming CLAUSE when ELEMENT names a state, by :STATE or :STATES, that
+STATES, a parsed :STATES alist, does not declare for ELEMENT's kind."
+  (let ((declared (mapcar #'car (cdr (assoc (spec-element-kind element) states)))))
+    (dolist (state (append (and (spec-element-state element)
+                                (list (spec-element-state element)))
+                           (spec-element-states element)))
+      (unless (member state declared :test #'eq)
+        (malformed clause (format nil "state ~S is not declared for kind ~S"
+                                  state (spec-element-kind element)))))))
+
 (defun parse-spec (form)
   "Return the spec FORM describes, as a spec record.
 FORM is a spec record, returned unchanged, or a plist (:view keyword :elements (clause ...)),
-optionally with :order ((axis id id ...) ...) and :contrast (:text r :non-text r).
+optionally with :order ((axis id id ...) ...), :states ((kind (state :ink c :background c) ...)
+...), and :contrast (:text r :non-text r).
 :ELEMENTS is a non-empty proper list of element clauses with distinct ids. Each :ORDER group
 names an axis, :LEFT-TO-RIGHT or :TOP-TO-BOTTOM, and at least two distinct declared ids.
-:CONTRAST sets positive real thresholds for either key.
+:STATES declares, per kind, the states an element may be in and how each looks; every state an
+element clause names must be declared for its kind. :CONTRAST sets positive real thresholds for
+either key. The order of the keys in FORM does not matter.
 Signal MALFORMED-SPEC naming the offending clause when FORM is not well formed: the whole form
 for a top-level key that is absent, unknown, or repeated, or a :VIEW that is not a keyword; the
 :ELEMENTS value when it is not a proper list; the :ORDER value when it is not a proper list,
-and the group at fault otherwise; the :CONTRAST value when it is malformed; the
-element clause at fault otherwise, the later one for a repeated id. A circular list signals
+and the group at fault otherwise; the :STATES value, kind entry, or state entry at fault; the
+:CONTRAST value when it is malformed; the element clause at fault otherwise, the later one for a
+repeated id or the one naming an undeclared state. A circular list signals
 rather than looping.
 Never evaluates or reads any part of FORM."
   (when (spec-p form)
@@ -223,8 +308,13 @@ Never evaluates or reads any part of FORM."
                                         (spec-element-id element))))
             (push element parsed)))
         (setf parsed (nreverse parsed))
-        (make-spec :view view
-                   :elements parsed
-                   :order (parse-order-clause (clause-value form :order)
-                                              (mapcar #'spec-element-id parsed))
-                   :contrast (parse-contrast-clause (clause-value form :contrast)))))))
+        (let ((states (parse-states-clause (clause-value form :states))))
+          (loop for element in parsed
+                for clause in elements
+                do (check-element-states element clause states))
+          (make-spec :view view
+                     :elements parsed
+                     :order (parse-order-clause (clause-value form :order)
+                                                (mapcar #'spec-element-id parsed))
+                     :states states
+                     :contrast (parse-contrast-clause (clause-value form :contrast))))))))

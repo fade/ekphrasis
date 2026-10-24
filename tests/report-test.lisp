@@ -147,3 +147,34 @@ displaced ids."
                              "expected (alpha bravo charlie), drawn (bravo alpha charlie), "
                              "displaced (bravo)")
         (format-finding order nil))))
+
+(define-test state-lines
+  "A :STATE error reports the expected and measured states with the reported and drawn ones; a
+:STATE-APPEARANCE error reports the state the client gave and the one the drawing shows.
+A missing state reads \"none\"."
+  (flet ((stated (check expected measured reported drawn)
+           (make-finding :check check
+                         :severity :error
+                         :spec-id :bravo
+                         :view :header
+                         :element-id 16
+                         :box (list 709 8 773 30)
+                         :expected expected
+                         :measured measured
+                         :detail (list :reported reported :drawn drawn
+                                       :ink "#FFFFFF" :background "#5C421A"
+                                       :kind :session-pill))))
+    (is string= (concatenate 'string
+                             "  error state :bravo #16 (session-pill) at (709 8 773 30) "
+                             "in header: expected fenced, measured attached "
+                             "(reported attached, drawn attached)")
+        (format-finding (stated :state :fenced :attached :attached :attached) nil))
+    (is string= (concatenate 'string
+                             "  error state-appearance :bravo #16 (session-pill) "
+                             "at (709 8 773 30) in header: reported fenced, drawn as attached")
+        (format-finding (stated :state-appearance :fenced :attached :fenced :attached) nil))
+    (is string= (concatenate 'string
+                             "  error state :bravo #16 (session-pill) at (709 8 773 30) "
+                             "in header: expected one of (attached fenced), measured none "
+                             "(reported none, drawn none)")
+        (format-finding (stated :state (list :attached :fenced) nil nil nil) nil))))
