@@ -30,7 +30,10 @@
 (defgeneric observe-run-event (observer event)
   (:documentation "Deliver EVENT to OBSERVER.
 EVENT is a plist whose :EVENT value is one of :VIEW-RENDERING, :ELEMENT-EXAMINED, :FINDING,
-or :RUN-END. Errors signalled by an observer propagate to the caller of RUN-CHECK.")
+or :RUN-END. Every run that begins ends with exactly one :RUN-END whose :OUTCOME is :COMPLETED
+or :ABORTED; an aborted end counts the :FINDING events already delivered.
+Errors signalled by an observer propagate to the caller of RUN-CHECK, except an error while
+receiving an aborted end, which is discarded so the condition that aborted the run propagates.")
   (:method ((observer function) event)
     (funcall observer event)))
 
@@ -54,28 +57,47 @@ SPEC is a spec record or spec data. SOURCE is a snapshot or a function of no arg
 returning one. OBSERVERS is a list of objects with an OBSERVE-RUN-EVENT method.
 THRESHOLDS is a plist (:TEXT r :NON-TEXT r) of contrast thresholds passed to COMPARE-SNAPSHOT;
 each key it sets overrides the spec's.
+Every run that begins ends with exactly one :RUN-END event whose :OUTCOME is :COMPLETED or
+:ABORTED. An aborted end counts the :FINDING events already delivered in :FINDINGS and :ERRORS.
 Return three values: the findings, the report string, and the snapshot.
-Signal MALFORMED-SPEC for a malformed spec; observer errors propagate unchanged."
+Signal MALFORMED-SPEC for a malformed spec, before any event. A condition that aborts the run
+propagates unchanged: an observer error while receiving the aborted end is discarded, and
+observer errors on every other event propagate."
   (let* ((spec (parse-spec spec))
          (view (spec-view spec))
-         (*run-observers* (append observers *run-observers*)))
-    (notify :event :view-rendering :view view)
-    (let* ((snapshot (take-snapshot source))
-           (findings
-             (compare-snapshot
-              snapshot spec
-              :thresholds thresholds
-              :on-examine (when *run-observers*
-                            (lambda (element)
-                              (notify :event :element-examined
-                                      :view view
-                                      :element-id (element-id element)
-                                      :kind (element-kind element))))
-              :on-finding (when *run-observers*
-                            (lambda (finding)
-                              (notify :event :finding :view view :finding finding))))))
-      (notify :event :run-end
-              :view view
-              :findings (length findings)
-              :errors (length (failing-findings findings)))
-      (values findings (format-report view findings) snapshot))))
+         (*run-observers* (append observers *run-observers*))
+         (delivered '())
+         (ended nil))
+    (unwind-protect
+         (progn
+           (notify :event :view-rendering :view view)
+           (let* ((snapshot (take-snapshot source))
+                  (findings
+                    (compare-snapshot
+                     snapshot spec
+                     :thresholds thresholds
+                     :on-examine (when *run-observers*
+                                   (lambda (element)
+                                     (notify :event :element-examined
+                                             :view view
+                                             :element-id (element-id element)
+                                             :kind (element-kind element))))
+                     :on-finding (when *run-observers*
+                                   (lambda (finding)
+                                     (push finding delivered)
+                                     (notify :event :finding :view view :finding finding))))))
+             (setf ended t)
+             (notify :event :run-end
+                     :view view
+                     :outcome :completed
+                     :findings (length findings)
+                     :errors (length (failing-findings findings)))
+             (values findings (format-report view findings) snapshot)))
+      (when (and *run-observers* (not ended))
+        (let ((event (list :event :run-end
+                           :view view
+                           :outcome :aborted
+                           :findings (length delivered)
+                           :errors (length (failing-findings delivered)))))
+          (dolist (observer *run-observers*)
+            (ignore-errors (observe-run-event observer event))))))))
