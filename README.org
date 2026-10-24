@@ -1,0 +1,60 @@
+#+TITLE: ekphrasis
+
+*ekphrasis*, /n./
+
+*Pronunciation:* /Brit./ =/ˈɛkfrəsɪs/=, /U.S./ =/ˈɛkfrəsəs/=
+
+*Forms:* also *ecphrasis*. Plural *ekphrases*.
+
+*Etymology:* [< ancient Greek ἔκφρασις 'description', < ἐκφράζειν 'to describe, set forth in words', < ἐκ 'out' + φράζειν 'to point out, make known, tell'; partly through post-classical Latin /ecphrasis/.]
+
+*1.* /Rhetoric./ A description so vivid that it seems to set its subject before the hearer's eyes. In ancient rhetorical teaching, also: one of the preliminary exercises (/progymnasmata/) in which a student practised describing persons, events, places, and times in this way.
+
+*2.* Specifically, a description in words of a work of visual art, whether the work is real or imagined; a poem or passage of prose that takes such a work for its subject.
+
+*3.* By extension, in criticism and art theory: any representation in one medium of what is shown in another, especially the rendering in words of something presented to the eye.
+
+-----
+
+Check what a user interface actually renders against a written description of what it should show.
+
+None of the checking is built yet: the source is still the project skeleton.
+
+I named the library for sense 2 with its order reversed. In sense 2 the picture comes first and the words follow it; here you write the description first, and ekphrasis reports where the rendering departs from it.
+
+* Requirements
+
+- SBCL 2.x
+- ASDF 3.x
+- All deps available via =$LISP_WORKSPACE/= or Quicklisp
+
+* Load
+
+#+begin_src lisp
+(asdf:load-system :ekphrasis)
+#+end_src
+
+* Test
+
+#+begin_src lisp
+(asdf:test-system :ekphrasis)
+#+end_src
+
+* Run
+
+#+begin_src bash
+# Foreground:
+sbcl --eval '(asdf:load-system :ekphrasis)' --eval '(ekphrasis/src/main:main)'
+
+# Build binary:
+./build.sh
+
+# Dev image (Slynk listener):
+./scripts/dev-boot.sh
+#+end_src
+
+* Licence
+
+AGPL-3.0-or-later; see =LICENSE=.
+
+Copyright (c) 2026 Brian O'Reilly.
