@@ -24,7 +24,7 @@ I named the library for sense 2 with its order reversed. In sense 2 the picture 
 
 * Status
 
-ekphrasis is at version 0.1.0. It is a library you call from a Lisp image, with no command-line interface yet. The McCLIM adapter is the only one: it renders a pane on a headless port that measures text on a fixed-width grid, so the boxes in a report are repeatable but are not the extents of a real font. Layout beyond order, relations between panes and views, and what reaches a screen are not checked yet; [[file:docs/checks.org][Checks]] ends with the full list of what ekphrasis does not check.
+ekphrasis is at version 0.1.0. It is a library you call from a Lisp image, with no command-line interface yet: the binary =build.sh= produces prints one usage line saying so. The McCLIM adapter is the only one: it renders a pane on a headless port that measures text on a fixed-width grid, so the boxes in a report are repeatable but are not the extents of a real font. Layout beyond order, relations between panes and views, and what reaches a screen are not checked yet; [[file:docs/checks.org][Checks]] ends with the full list of what ekphrasis does not check.
 
 * Install
 

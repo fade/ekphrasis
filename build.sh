@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # build.sh: produce a standalone ekphrasis binary via SBCL.
 #
-# Usage: ./build.sh [--output PATH]
-#   --output PATH   where to write the binary (default: bin/ekphrasis)
+# Usage: ./build.sh [PATH]
+#   PATH   where to write the binary (default: bin/ekphrasis)
 #
 # Requires SBCL and all ASDF deps available (via LISP_WORKSPACE or Quicklisp).
+# The binary keeps the runtime options it was built with, so every argument,
+# --help and --version included, reaches the toplevel instead of the SBCL runtime.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -29,6 +31,7 @@ sbcl --noinform \
      --eval "(sb-ext:save-lisp-and-die \"$OUTPUT\"
                :toplevel #'ekphrasis/src/main:main
                :executable t
+               :save-runtime-options t
                :compression t)"
 
 if [ ! -f "$OUTPUT" ]; then
