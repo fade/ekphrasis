@@ -1,0 +1,729 @@
+;;;; tests/mcclim/control-test.lisp
+;;;; SPDX-License-Identifier: AGPL-3.0-or-later
+;;;;
+;;;; Controls: each fixture variant carries one defect the checks must find, and the clean
+;;;; variant, its twin, must pass the same spec.
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (let ((pkg (find-package '#:ekphrasis/tests/mcclim/control-test)))
+    (when pkg
+      (sb-ext:without-package-locks (delete-package pkg)))))
+
+(defpackage #:ekphrasis/tests/mcclim/control-test
+  (:use #:cl #:zebra)
+  (:import-from #:ekphrasis
+                #:composite-over
+                #:contrast-ratio
+                #:element-background
+                #:element-box
+                #:element-container
+                #:element-id
+                #:element-ink
+                #:element-kind
+                #:element-state
+                #:element-text
+                #:element-to-plist
+                #:failing-findings
+                #:finding-check
+                #:finding-container
+                #:finding-detail
+                #:finding-element-id
+                #:finding-expected
+                #:finding-measured
+                #:finding-severity
+                #:finding-spec-id
+                #:format-finding
+                #:parse-rgb
+                #:rgb-match-p
+                #:snapshot-elements)
+  (:import-from #:clim
+                #:presentation-object)
+  (:import-from #:ekphrasis/mcclim
+                #:exercise-feedback-state)
+  (:import-from #:ekphrasis/tests/mcclim/fixture
+                #:call-with-fixture-pane
+                #:check-fixture
+                #:dark-ink-fixture-view
+                #:fixture-battery
+                #:fixture-presentations
+                #:fixture-session-name
+                #:fixture-spec))
+
+(in-package #:ekphrasis/tests/mcclim/control-test)
+
+(defparameter *resting* (list :exercise-feedback nil)
+  "Render arguments that judge the resting drawing alone, with no highlight feedback exercised.")
+
+(defun clean-twin-passes ()
+  "Assert that the clean fixture, at rest, yields no findings against the fixture spec."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :render *resting*)
+    (true (null findings) "clean twin: ~A" report)))
+
+(define-test missing-element-control
+  "The header without the bravo pill yields one :MISSING finding for :BRAVO; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :missing :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (is eq :missing (finding-check (first findings)) "~A" report)
+    (is eq :bravo (finding-spec-id (first findings)) "~A" report))
+  (clean-twin-passes))
+
+(define-test relabelled-element-control
+  "The header labelling bravo \"brovo\" yields one :LABEL finding for :BRAVO; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :relabelled :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :label (finding-check finding) "~A" report)
+      (is eq :bravo (finding-spec-id finding) "~A" report)
+      (is string= "bravo" (finding-expected finding) "~A" report)
+      (is string= "brovo" (finding-measured finding) "~A" report)))
+  (clean-twin-passes))
+
+(define-test low-contrast-text-control
+  "The title drawn in 10% grey on gray20 yields one :CONTRAST finding for :TITLE, with its ratio
+against the text threshold and both colours; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :low-contrast-text :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :contrast (finding-check finding) "~A" report)
+      (is eq :error (finding-severity finding) "~A" report)
+      (is eq :title (finding-spec-id finding) "~A" report)
+      ;; McCLIM stores a 10% grey as 0.102, so the reference is the drawn ink as reported.
+      (true (< (abs (- (finding-measured finding)
+                       (contrast-ratio (parse-rgb "#1A1A1A") (parse-rgb "#333333"))))
+               0.005)
+            "~A" report)
+      (is = 4.5 (finding-expected finding) "~A" report)
+      (is string= "#1A1A1A" (getf (finding-detail finding) :ink) "~A" report)
+      (is string= "#333333" (getf (finding-detail finding) :background) "~A" report)))
+  (clean-twin-passes))
+
+(define-test low-contrast-outline-control
+  "The target box drawn in black on gray20 yields one :CONTRAST finding on that top-level
+outline, with its ratio against the non-text threshold; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :low-contrast-outline :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :contrast (finding-check finding) "~A" report)
+      (is eq :outline (getf (finding-detail finding) :kind) "~A" report)
+      (is eql 44 (finding-element-id finding) "~A" report)
+      (false (finding-container finding) "~A" report)
+      (true (< (abs (- (finding-measured finding) 1.662)) 0.005) "~A" report)
+      (is = 3.0 (finding-expected finding) "~A" report)
+      (is string= "#000000" (getf (finding-detail finding) :ink) "~A" report)
+      (is string= "#333333" (getf (finding-detail finding) :background) "~A" report)))
+  (clean-twin-passes))
+
+(define-test per-call-threshold-clears-outline-control
+  "A non-text threshold of 1.5 given to the call clears the black target box; at the default it
+is found."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :low-contrast-outline :render *resting*
+                                    :thresholds (list :non-text 1.5))
+    (true (null findings) "~A" report))
+  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-outline
+                                                :render *resting*))))
+
+(define-test per-spec-threshold-clears-text-control
+  "A spec setting the text threshold to 1.3 clears the faint title, at 1.38 to 1; the fixture
+spec without it finds the title."
+  (multiple-value-bind (findings report)
+      (check-fixture (append (fixture-spec) (list :contrast (list :text 1.3)))
+                     :variant :low-contrast-text :render *resting*)
+    (true (null findings) "~A" report))
+  (is = 1 (length (check-fixture (fixture-spec) :variant :low-contrast-text
+                                                :render *resting*))))
+
+(define-test flipping-ink-is-reported-not-failed
+  "The target box drawn in the flipping ink has no fixed colour: it yields one :UNRESOLVED-INK
+warning, and nothing that fails; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :flipping-outline :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (is eq :unresolved-ink (finding-check (first findings)) "~A" report)
+    (is eq :warning (finding-severity (first findings)) "~A" report)
+    (is eql 44 (finding-element-id (first findings)) "~A" report)
+    (is equal '() (failing-findings findings) "~A" report))
+  (clean-twin-passes))
+
+(define-test mark-on-a-fill-of-unknown-colour-is-unresolved
+  "The title drawn over a flipping-ink fill, or over a pattern, has no known background: each
+yields one :UNRESOLVED-INK warning on the title, unresolved in its background, and nothing that
+fails; its clean twin none."
+  (dolist (variant '(:flipping-fill :pattern-fill))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant variant :render *resting*)
+      (is = 1 (length findings) "~A: ~A" variant report)
+      (is equal '() (failing-findings findings) "~A: ~A" variant report)
+      (let ((finding (first findings)))
+        (when finding
+          (is eq :unresolved-ink (finding-check finding) "~A: ~A" variant report)
+          (is eq :warning (finding-severity finding) "~A: ~A" variant report)
+          (is eq :title (finding-spec-id finding) "~A: ~A" variant report)
+          (is equal '(:background) (getf (finding-detail finding) :unresolved)
+              "~A: ~A" variant report)
+          (let ((title (found-element finding snapshot)))
+            (is eq :text (element-kind title) "~A" variant)
+            (is eq nil (element-container title) "~A" variant)
+            (is string= "EKPHRASIS" (element-text title) "~A" variant)
+            (true (rgb-match-p '(1 1 1) (element-ink title))
+                  "~A ink ~S" variant (element-ink title))
+            (is eq nil (element-background title) "~A" variant))))))
+  (clean-twin-passes))
+
+(defun target-outline (snapshot)
+  "Return SNAPSHOT's top-level :OUTLINE element whose box, rounded, is (300 10 380 40)."
+  (find-if (lambda (element)
+             (and (eq :outline (element-kind element))
+                  (null (element-container element))
+                  (equal '(300 10 380 40) (mapcar #'round (element-box element)))))
+           (snapshot-elements snapshot)))
+
+(define-test hidden-frame-round-a-pattern-is-found
+  "A target box in the page's own colour round a pattern fails where its background is known: it
+yields one :CONTRAST error, 1.00 below 3.00, and no :UNRESOLVED-INK warning. That outline and
+the white one round a pattern take gray20 from their known sample points and are partly
+unresolved; the title over a pattern has no background and is not."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :hidden-frame-round-pattern :render *resting*)
+    (let ((outline (target-outline snapshot)))
+      (true outline "target outline: ~A" report)
+      (is = 1 (length findings) "~A" report)
+      (false (find :unresolved-ink findings :key #'finding-check) "~A" report)
+      (let ((finding (find :contrast findings :key #'finding-check)))
+        (true finding "~A" report)
+        (when finding
+          (is eq :error (finding-severity finding) "~A" report)
+          (is eq :outline (getf (finding-detail finding) :kind) "~A" report)
+          (is eq outline (found-element finding snapshot) "~A" report)
+          (true (< (abs (- (finding-measured finding) 1.0)) 1d-9) "~A" report)
+          (is = 3.0 (finding-expected finding) "~A" report)
+          (is string= "#333333" (getf (finding-detail finding) :ink) "~A" report)
+          (is string= "#333333" (getf (finding-detail finding) :background) "~A" report)))
+      (when outline
+        (let ((background (element-background outline)))
+          (true (and background (rgb-match-p (parse-rgb "#333333") background))
+                "hidden frame background ~S" background))
+        (true (getf (element-to-plist outline) :partly-unresolved)
+              "hidden frame ~S" (element-to-plist outline)))))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :frame-round-pattern :render *resting*)
+    (declare (ignore findings))
+    (let ((outline (target-outline snapshot)))
+      (true outline "target outline: ~A" report)
+      (when outline
+        (let ((ink (element-ink outline))
+              (background (element-background outline)))
+          (true (and ink (rgb-match-p '(1 1 1) ink)) "white frame ink ~S" ink)
+          (true (and background (rgb-match-p (parse-rgb "#333333") background))
+                "white frame background ~S" background))
+        (true (getf (element-to-plist outline) :partly-unresolved)
+              "white frame ~S" (element-to-plist outline)))))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :pattern-fill :render *resting*)
+    (declare (ignore findings))
+    (let ((title (find-if (lambda (element)
+                            (and (eq :text (element-kind element))
+                                 (null (element-container element))
+                                 (equal "EKPHRASIS" (element-text element))))
+                          (snapshot-elements snapshot))))
+      (true title "title: ~A" report)
+      (when title
+        (is eq nil (element-background title) "~S" (element-to-plist title))
+        (is eq nil (getf (element-to-plist title) :partly-unresolved)
+            "~S" (element-to-plist title))))))
+
+(define-test frame-passing-round-a-pattern-keeps-the-warning
+  "A white target box round a pattern passes where its background is known and is unknown
+elsewhere: it yields one :UNRESOLVED-INK warning, unresolved in its background and partly
+unresolved, and nothing that fails."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :frame-round-pattern :render *resting*)
+    (let ((outline (target-outline snapshot))
+          (warning (find :unresolved-ink findings :key #'finding-check)))
+      (true outline "target outline: ~A" report)
+      (is = 1 (length findings) "~A" report)
+      (is equal '() (failing-findings findings) "~A" report)
+      (true warning "~A" report)
+      (when warning
+        (is eq :warning (finding-severity warning) "~A" report)
+        (is eql 45 (finding-element-id warning) "~A" report)
+        (is eq outline (found-element warning snapshot) "~A" report)
+        (is equal '(:background) (getf (finding-detail warning) :unresolved) "~A" report)
+        (is eq t (getf (finding-detail warning) :partly-unresolved) "~A" report)
+        (is string= (concatenate 'string
+                                 "  warning unresolved-ink #45 (outline) at (300 10 380 40) "
+                                 "in header: background has no fixed colour at some sample "
+                                 "points")
+            (format-finding warning nil))))))
+
+(define-test conforming-spec-with-order-and-states-passes
+  "The clean header meets the fixture spec's order and states, whether the pills report their
+state or the drawing alone shows it."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :render *resting*)
+    (true (null findings) "reported: ~A" report))
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean
+                                    :render (list :state-function nil :exercise-feedback nil))
+    (true (null findings) "drawn only: ~A" report)))
+
+(define-test swapped-elements-control
+  "The header drawing bravo left of alpha yields one :ORDER finding for the pill group, with the
+drawn sequence; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :swapped :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :order (finding-check finding) "~A" report)
+      (is equal '(:alpha :bravo :charlie) (finding-expected finding) "~A" report)
+      (is equal '(:bravo :alpha :charlie) (finding-measured finding) "~A" report)))
+  (clean-twin-passes))
+
+(define-test wrong-state-control
+  "The header with bravo attached, reported and drawn so, yields one :STATE finding for :BRAVO,
+expected fenced and measured attached; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :wrong-state :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :state (finding-check finding) "~A" report)
+      (is eq :bravo (finding-spec-id finding) "~A" report)
+      (is eq :fenced (finding-expected finding) "~A" report)
+      (is eq :attached (finding-measured finding) "~A" report)))
+  (clean-twin-passes))
+
+(define-test state-drawn-wrongly-control
+  "The header with bravo fenced but its pill drawn attached yields one :STATE-APPEARANCE finding
+for :BRAVO, reported fenced and drawn attached; its clean twin none."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :state-drawn-wrongly :render *resting*)
+    (is = 1 (length findings) "~A" report)
+    (let ((finding (first findings)))
+      (is eq :state-appearance (finding-check finding) "~A" report)
+      (is eq :bravo (finding-spec-id finding) "~A" report)
+      (is eq :fenced (getf (finding-detail finding) :reported) "~A" report)
+      (is eq :attached (getf (finding-detail finding) :drawn) "~A" report)))
+  (clean-twin-passes))
+
+(define-test drawn-state-alone-control
+  "With no state reported, the header with bravo drawn attached yields one :STATE finding judged
+from the drawing alone; its clean twin, also unreported, none."
+  (let ((unreported (list :state-function nil :exercise-feedback nil)))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :wrong-state :render unreported)
+      (is = 1 (length findings) "~A" report)
+      (let ((finding (first findings)))
+        (is eq :state (finding-check finding) "~A" report)
+        (true (member :reported (finding-detail finding)) "~A" report)
+        (false (getf (finding-detail finding) :reported) "~A" report)
+        (is eq :attached (getf (finding-detail finding) :drawn) "~A" report)))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :clean :render unreported)
+      (true (null findings) "clean twin: ~A" report))))
+
+(defun found-element (finding snapshot)
+  "Return the element of SNAPSHOT that FINDING names by id."
+  (find (finding-element-id finding) (snapshot-elements snapshot) :key #'element-id))
+
+(define-test highlight-that-covers-the-label-hides-it
+  "Exercising the default pills, whose per-part highlight fills every band beneath the label in
+the label's own white, yields one
+:CONTRAST finding per pill on its label re-judged as highlighted, white on white at 1.0 against
+4.5; the single-box and bordered pills yield none."
+  (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+    (is = 3 (length findings) "~A" report)
+    (let ((pills (remove :session-pill (snapshot-elements snapshot)
+                         :key #'element-kind :test-not #'eq)))
+      (dolist (pill pills)
+        (let ((own (remove-if-not (lambda (finding)
+                                    (eql (element-id pill) (finding-container finding)))
+                                  findings)))
+          (is = 1 (length own) "~A: ~A" (element-text pill) report)
+          (let* ((finding (first own))
+                 (label (found-element finding snapshot)))
+            (is eq :contrast (finding-check finding) "~A" report)
+            (is eq :text (element-kind label) "~A" report)
+            (is eq :highlighted (element-state label) "~A" report)
+            (is eql (element-id pill) (element-container label) "~A" report)
+            (is string= (element-text pill) (element-text label) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :ink) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :background) "~A" report)
+            (true (< (abs (- 1 (finding-measured finding))) 1d-9) "~A" report)
+            (is = 4.5 (finding-expected finding) "~A" report))))))
+  (dolist (variant '(:single-box-pills :bordered-pills))
+    (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant variant)
+      (true (null findings) "~A: ~A" variant report))))
+
+(define-test interaction-only-outline-control
+  "On a black foreground over a near-black page, single-box pills pass at rest; exercised, each
+pill's black highlight frame is a :CONTRAST finding on a highlighted :OUTLINE inside the pill, at
+the ratio of black on #14151D against 3.0. The same pills on the light-foreground frame pass."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view
+                                    :render *resting*)
+    (true (null findings) "at rest: ~A" report))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view)
+    (is = 3 (length findings) "~A" report)
+    (let ((expected (contrast-ratio '(0 0 0) (parse-rgb "#14151D"))))
+      (dolist (finding findings)
+        (let ((frame (found-element finding snapshot)))
+          (is eq :contrast (finding-check finding) "~A" report)
+          (is eq :outline (element-kind frame) "~A" report)
+          (is eq :highlighted (element-state frame) "~A" report)
+          (is eq :session-pill
+              (element-kind (find (element-container frame) (snapshot-elements snapshot)
+                                  :key #'element-id))
+              "~A" report)
+          (true (< (abs (- expected (finding-measured finding))) 0.01) "~A" report)
+          (is = 3.0 (finding-expected finding) "~A" report)))))
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :single-box-pills)
+    (true (null findings) "clean twin: ~A" report)))
+
+(define-test interaction-only-lines-say-when-and-which-label
+  "Exercised, each label a band pill's highlight hides has a line naming the label's text and its
+pill's spec id and ending \", only when highlighted\"; each invisible frame of the dark-ink pills
+has a line ending the same way with no label clause."
+  (flet ((ends-with-p (suffix line)
+           (and (>= (length line) (length suffix))
+                (string= suffix line :start2 (- (length line) (length suffix))))))
+    (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+      (let ((lines (mapcar (lambda (finding) (format-finding finding nil)) findings))
+            (clauses (getf (fixture-spec) :elements)))
+        (is = 3 (length lines) "~A" report)
+        (is string= (concatenate 'string
+                                 "  error contrast #46 (text) at (814 15 870 28) in header #2: "
+                                 "1.00 below 4.50 (ink #FFFFFF on #FFFFFF), "
+                                 "label \"charlie\" of :charlie, only when highlighted")
+            (first lines))
+        (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                              :key #'element-kind :test-not #'eq))
+          (let* ((text (element-text pill))
+                 (id (car (find text clauses :key (lambda (clause) (getf (cdr clause) :label))
+                                             :test #'equal)))
+                 (finding (find (element-id pill) findings :key #'finding-container))
+                 (line (and finding (format-finding finding nil)))
+                 (suffix (format nil ", label ~S of :~(~A~), only when highlighted" text id)))
+            (true id "no spec element labelled ~S" text)
+            (true (and line (ends-with-p suffix line)) "~A: ~A" text report)))))
+    (multiple-value-bind (findings report)
+        (check-fixture (fixture-spec) :variant :single-box-pills :frame 'dark-ink-fixture-view)
+      (let ((lines (mapcar (lambda (finding) (format-finding finding nil)) findings)))
+        (is = 3 (length lines) "~A" report)
+        (is string= (concatenate 'string
+                                 "  error contrast #45 (outline) at (802 8 882 30) in header #2: "
+                                 "1.15 below 3.00 (ink #000000 on #14151D), only when highlighted")
+            (first lines))
+        (dolist (line lines)
+          (true (ends-with-p ", only when highlighted" line) "~A" line)
+          (false (search "label" line) "~A" line))))))
+
+(define-test redrawn-label-is-judged-as-last-drawn
+  "A label the highlight redraws over its own fill is judged once, as last drawn. The
+redrawn-label pills yield no findings, each pill's one highlighted text in its drawn-state fill
+on white. The flipping-highlight pills yield one :UNRESOLVED-INK warning per pill, on that pill's
+one highlighted text, unresolved in its background, and nothing that fails."
+  (flet ((pills (snapshot)
+           (remove :session-pill (snapshot-elements snapshot)
+                   :key #'element-kind :test-not #'eq))
+         (highlighted-texts (pill snapshot)
+           (remove-if-not (lambda (element)
+                            (and (eq :text (element-kind element))
+                                 (eq :highlighted (element-state element))
+                                 (eql (element-id pill) (element-container element))))
+                          (snapshot-elements snapshot)))
+         (state-fill-p (rgb)
+           (and rgb
+                (or (rgb-match-p (parse-rgb "#5C421A") rgb)
+                    (rgb-match-p (parse-rgb "#802929") rgb)))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :redrawn-label-pills)
+      (true (null findings) "redrawn: ~A" report)
+      (dolist (pill (pills snapshot))
+        (let ((texts (highlighted-texts pill snapshot)))
+          (is = 1 (length texts) "redrawn ~A: ~A" (element-text pill) report)
+          (let ((text (first texts)))
+            (when text
+              (is string= (element-text pill) (element-text text))
+              (true (state-fill-p (element-ink text))
+                    "~A ink ~S" (element-text pill) (element-ink text))
+              (true (and (element-background text)
+                         (rgb-match-p '(1 1 1) (element-background text)))
+                    "~A background ~S" (element-text pill) (element-background text)))))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :flipping-highlight-pills)
+      (is = 3 (length findings) "flipping: ~A" report)
+      (is equal '() (failing-findings findings) "flipping: ~A" report)
+      (let ((containers '()))
+        (dolist (finding findings)
+          (let ((text (found-element finding snapshot)))
+            (is eq :unresolved-ink (finding-check finding) "~A" report)
+            (is eq :warning (finding-severity finding) "~A" report)
+            (true (member :background (getf (finding-detail finding) :unresolved))
+                  "~A" report)
+            (true (and text
+                       (eq :text (element-kind text))
+                       (eq :highlighted (element-state text)))
+                  "~A" report)
+            (when text (pushnew (element-container text) containers))))
+        (is = 3 (length containers) "flipping containers: ~A" report))
+      (dolist (pill (pills snapshot))
+        (is = 1 (length (highlighted-texts pill snapshot))
+            "flipping ~A: ~A" (element-text pill) report)))))
+
+(define-test highlight-that-leaves-the-label-legible-passes
+  "Exercising the band pills on a black foreground paints the bands beneath each white label
+black and frames the label in 1 px of black: the label stays legible. They yield no findings, and
+each pill's one highlighted text is white on black."
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :clean :frame 'dark-ink-fixture-view)
+    (true (null findings) "~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((texts (remove-if-not (lambda (element)
+                                    (and (eq :text (element-kind element))
+                                         (eq :highlighted (element-state element))
+                                         (eql (element-id pill) (element-container element))))
+                                  (snapshot-elements snapshot))))
+        (is = 1 (length texts) "~A: ~A" (element-text pill) report)
+        (let ((text (first texts)))
+          (when text
+            (true (and (element-ink text) (rgb-match-p '(1 1 1) (element-ink text)))
+                  "~A ink ~S" (element-text pill) (element-ink text))
+            (true (and (element-background text)
+                       (rgb-match-p '(0 0 0) (element-background text)))
+                  "~A background ~S" (element-text pill) (element-background text))))))))
+
+(defun pill-label-covers (variant)
+  "Render the fixture header drawn as VARIANT, exercise each pill, and return one plist per pill in
+painting order. :NAME is the pill's label. The rest count the pill's added filled primitives
+against the label's last drawing in the highlighted replay:
+:BEFORE-CONTAINING, drawn before it, box containing its centre;
+:AFTER-OVERLAPPING, drawn after it, box overlapping its box;
+:AFTER-CONTAINING, drawn after it, box containing its centre;
+:CONTAINING, drawn anywhere, box containing its centre."
+  (flet ((contains-p (box x y)
+           (destructuring-bind (x1 y1 x2 y2) box
+             (and (<= x1 x x2) (<= y1 y y2))))
+         (overlaps-p (a b)
+           (destructuring-bind (ax1 ay1 ax2 ay2) a
+             (destructuring-bind (bx1 by1 bx2 by2) b
+               (and (< ax1 bx2) (< bx1 ax2) (< ay1 by2) (< by1 ay2))))))
+    (call-with-fixture-pane
+     (lambda (pane)
+       (loop for presentation in (fixture-presentations pane)
+             collect
+             (multiple-value-bind (added exercised) (exercise-feedback-state pane presentation)
+               (let* ((name (fixture-session-name (presentation-object presentation)))
+                      (at (position-if (lambda (primitive)
+                                         (and (eq :text (getf primitive :shape))
+                                              (equal name (getf primitive :text))))
+                                       exercised :from-end t))
+                      (box (getf (nth at exercised) :box))
+                      (x (/ (+ (first box) (third box)) 2))
+                      (y (/ (+ (second box) (fourth box)) 2))
+                      (filled (remove-if-not (lambda (primitive) (getf primitive :filled))
+                                             added)))
+                 (flet ((counted (drawn test)
+                          (count-if (lambda (primitive)
+                                      (and (funcall drawn (getf primitive :position))
+                                           (funcall test (getf primitive :box))))
+                                    filled)))
+                   (list :name name
+                         :before-containing (counted (lambda (p) (< p at))
+                                                     (lambda (b) (contains-p b x y)))
+                         :after-overlapping (counted (lambda (p) (> p at))
+                                                     (lambda (b) (overlaps-p b box)))
+                         :after-containing (counted (lambda (p) (> p at))
+                                                    (lambda (b) (contains-p b x y)))
+                         :containing (counted (constantly t)
+                                              (lambda (b) (contains-p b x y)))))))))
+     :variant variant)))
+
+(define-test band-highlight-hides-the-label-by-its-colour
+  "The band pill's label is hidden by colour: the per-part highlight fills every band beneath it
+in the label's own white. Exercised, the band pills yield one white-on-white :CONTRAST finding per
+pill, on its highlighted text. Beneath each label's last drawing a band highlight spans the
+label's centre; the frame drawn after it overlaps the label's box, and nothing drawn after it
+spans the centre. The same bands under a black highlight yield no findings. Solid pills carry the
+same frame round the label, nothing spans its centre, and they yield no findings."
+  (multiple-value-bind (findings report snapshot) (check-fixture (fixture-spec) :variant :clean)
+    (is = 3 (length findings) "~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((own (remove (element-id pill) findings :key #'finding-container :test-not #'eql)))
+        (is = 1 (length own) "~A: ~A" (element-text pill) report)
+        (let* ((finding (first own))
+               (label (and finding (found-element finding snapshot))))
+          (when label
+            (is eq :contrast (finding-check finding) "~A" report)
+            (is eq :text (element-kind label) "~A" report)
+            (is eq :highlighted (element-state label) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :ink) "~A" report)
+            (is string= "#FFFFFF" (getf (finding-detail finding) :background) "~A" report))))))
+  (dolist (covers (pill-label-covers :clean))
+    (destructuring-bind (&key name before-containing after-overlapping after-containing
+                         &allow-other-keys)
+        covers
+      (true (plusp before-containing) "~A: no band highlight beneath the label" name)
+      (true (plusp after-overlapping) "~A: no frame drawn round the label" name)
+      (is = 0 after-containing "~A: a fill drawn over the label's centre" name)))
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :clean :frame 'dark-ink-fixture-view)
+    (true (null findings) "black highlight: ~A" report))
+  (multiple-value-bind (findings report) (check-fixture (fixture-spec) :variant :solid-pills)
+    (true (null findings) "solid pills: ~A" report))
+  (dolist (covers (pill-label-covers :solid-pills))
+    (destructuring-bind (&key name after-overlapping containing &allow-other-keys) covers
+      (true (plusp after-overlapping) "solid ~A: no frame drawn round the label" name)
+      (is = 0 containing "solid ~A: a fill spans the label's centre" name))))
+
+(define-test translucent-highlight-tints-the-label
+  "Exercising the overlay pills veils each pill, its label included, in white at 15% opacity: the
+veil tints the label and what lies beneath it, and hides neither. They yield no findings, and each
+pill's one highlighted text is white on its drawn-state fill tinted by the veil, at a contrast
+ratio of at least 4.5."
+  (let ((drawn-fills '(("alpha" . "#5C421A") ("bravo" . "#802929") ("charlie" . "#5C421A"))))
+    (multiple-value-bind (findings report snapshot)
+        (check-fixture (fixture-spec) :variant :overlay-pills)
+      (true (null findings) "~A" report)
+      (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                            :key #'element-kind :test-not #'eq))
+        (let* ((name (element-text pill))
+               (tinted (composite-over '(1 1 1) 0.15
+                                       (parse-rgb (cdr (assoc name drawn-fills :test #'equal)))))
+               (texts (remove-if-not
+                       (lambda (element)
+                         (and (eq :text (element-kind element))
+                              (eq :highlighted (element-state element))
+                              (eql (element-id pill) (element-container element))))
+                       (snapshot-elements snapshot))))
+          (is = 1 (length texts) "~A: ~A" name report)
+          (let* ((text (first texts))
+                 (ink (and text (element-ink text)))
+                 (background (and text (element-background text))))
+            (when text
+              (true (and ink (rgb-match-p '(1 1 1) ink)) "~A ink ~S" name ink)
+              (true (and background (rgb-match-p tinted background))
+                    "~A background ~S, expected ~S" name background tinted)
+              (true (and ink background (>= (contrast-ratio ink background) 4.5))
+                    "~A contrast of ~S on ~S" name ink background))))))))
+
+(define-test inner-fill-stays-above-the-highlight-background
+  "A bordered pill whose highlight redraws its white background and then its badge leaves the
+white label on the badge. The badge pills yield no findings at rest or exercised, and each pill's
+one highlighted text is white on its drawn-state fill."
+  (multiple-value-bind (findings report)
+      (check-fixture (fixture-spec) :variant :badge-pills :render *resting*)
+    (true (null findings) "at rest: ~A" report))
+  (multiple-value-bind (findings report snapshot)
+      (check-fixture (fixture-spec) :variant :badge-pills)
+    (true (null findings) "exercised: ~A" report)
+    (dolist (pill (remove :session-pill (snapshot-elements snapshot)
+                          :key #'element-kind :test-not #'eq))
+      (let ((texts (remove-if-not (lambda (element)
+                                    (and (eq :text (element-kind element))
+                                         (eq :highlighted (element-state element))
+                                         (eql (element-id pill) (element-container element))))
+                                  (snapshot-elements snapshot))))
+        (is = 1 (length texts) "~A: ~A" (element-text pill) report)
+        (let* ((text (first texts))
+               (ink (and text (element-ink text)))
+               (background (and text (element-background text))))
+          (when text
+            (true (and ink (rgb-match-p '(1 1 1) ink))
+                  "~A ink ~S" (element-text pill) ink)
+            (true (and background
+                       (or (rgb-match-p (parse-rgb "#5C421A") background)
+                           (rgb-match-p (parse-rgb "#802929") background)))
+                  "~A background ~S" (element-text pill) background)))))))
+
+(define-test exercised-run-completes-over-a-pattern
+  "A pattern inside a single-box pill, or beside the pills, survives a default exercised run. The
+patterned pills yield no findings exercised or at rest, and each pill gains one highlighted
+element, its frame outline. The pattern beneath the title yields the title's unresolved-ink
+warning and one label-hidden contrast error per band pill."
+  (flet ((run (variant &optional render)
+           (handler-case (multiple-value-list
+                          (check-fixture (fixture-spec) :variant variant :render render))
+             (error (condition) condition)))
+         (pills (snapshot)
+           (remove :session-pill (snapshot-elements snapshot)
+                   :key #'element-kind :test-not #'eq)))
+    (let ((outcome (run :patterned-pills)))
+      (false (typep outcome 'error) "patterned pills exercised: ~A" outcome)
+      (unless (typep outcome 'error)
+        (destructuring-bind (findings report snapshot &rest more) outcome
+          (declare (ignore more))
+          (true (null findings) "patterned pills exercised: ~A" report)
+          (dolist (pill (pills snapshot))
+            (let ((highlighted (remove-if-not
+                                (lambda (element)
+                                  (and (eq :highlighted (element-state element))
+                                       (eql (element-id pill) (element-container element))))
+                                (snapshot-elements snapshot))))
+              (is = 1 (length highlighted) "~A: ~A" (element-text pill) report)
+              (is eq :outline (and highlighted (element-kind (first highlighted)))
+                  "~A: ~A" (element-text pill) report))))))
+    (let ((outcome (run :patterned-pills *resting*)))
+      (false (typep outcome 'error) "patterned pills at rest: ~A" outcome)
+      (unless (typep outcome 'error)
+        (true (null (first outcome)) "patterned pills at rest: ~A" (second outcome))))
+    (let ((outcome (run :pattern-fill)))
+      (false (typep outcome 'error) "pattern fill exercised: ~A" outcome)
+      (unless (typep outcome 'error)
+        (destructuring-bind (findings report snapshot &rest more) outcome
+          (declare (ignore more))
+          (is = 4 (length findings) "~A" report)
+          (let ((warning (find :unresolved-ink findings :key #'finding-check)))
+            (true warning "~A" report)
+            (when warning
+              (is eq :warning (finding-severity warning) "~A" report)
+              (is eq :title (finding-spec-id warning) "~A" report)))
+          (dolist (pill (pills snapshot))
+            (let ((own (remove-if-not (lambda (finding)
+                                        (and (eq :contrast (finding-check finding))
+                                             (eql (element-id pill) (finding-container finding))))
+                                      findings)))
+              (is = 1 (length own) "~A: ~A" (element-text pill) report)
+              (let* ((finding (first own))
+                     (label (and finding (found-element finding snapshot))))
+                (when finding
+                  (is eq :error (finding-severity finding) "~A" report)
+                  (true (and label
+                             (eq :text (element-kind label))
+                             (eq :highlighted (element-state label)))
+                        "~A: ~A" (element-text pill) report))))))))))
+
+(defun check-case (case)
+  "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
+fixture spec and return what CHECK-FIXTURE returns."
+  (check-fixture (fixture-spec) :frame (getf case :frame)
+                                :variant (getf case :variant)
+                                :render (getf case :render)))
+
+(define-test each-class-has-a-control-and-clean-twin
+  "Every defect class has a control that yields at least one error of its check, on an element of
+the kind and state the class names, and clean twins that yield no findings."
+  (dolist (entry (fixture-battery))
+    (destructuring-bind (&key class check mark control twins) entry
+      (multiple-value-bind (findings report snapshot) (check-case control)
+        (let ((found (remove-if-not
+                      (lambda (finding)
+                        (and (eq check (finding-check finding))
+                             (eq :error (finding-severity finding))
+                             (or (null mark)
+                                 (let ((element (found-element finding snapshot)))
+                                   (and element
+                                        (eq (first mark) (element-kind element))
+                                        (eq (second mark) (element-state element)))))))
+                      findings)))
+          (true found "~A control: ~A" class report)))
+      (dolist (twin twins)
+        (multiple-value-bind (findings report) (check-case twin)
+          (true (null findings) "~A twin ~S: ~A" class (getf twin :variant) report))))))
