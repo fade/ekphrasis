@@ -323,14 +323,39 @@ history is left as it was. PANE draws on a FIXED-WIDTH-MEDIUM."
       (replay (stream-output-history pane) pane))
     (coerce *drawing-log* 'list)))
 
+(defun same-ink-p (ink other)
+  "True when INK and OTHER draw the same: they are EQUALP, or both are CLIME:TRANSFORMED-DESIGN
+inks whose source designs are the same by this rule and whose transformations are
+CLIM:TRANSFORMATION-EQUAL. A replayed pattern or image arrives as a fresh transformed design round
+the record's own design, so two replays of one drawing hold distinct ink objects."
+  (or (equalp ink other)
+      (and (typep ink 'clime:transformed-design)
+           (typep other 'clime:transformed-design)
+           (same-ink-p (clime:transformed-design-design ink)
+                       (clime:transformed-design-design other))
+           (clim:transformation-equal (clime:transformed-design-transformation ink)
+                                      (clime:transformed-design-transformation other)))))
+
+(defun same-drawing-p (primitive other)
+  "True when the drawing primitives PRIMITIVE and OTHER, plists as *DRAWING-LOG* describes, draw
+the same: they hold the same keys in the same order, every value but the ink is EQUALP, and the
+inks are the same by SAME-INK-P."
+  (and (= (length primitive) (length other))
+       (loop for (key value) on primitive by #'cddr
+             for (other-key other-value) on other by #'cddr
+             always (and (eq key other-key)
+                         (if (eq key :ink)
+                             (same-ink-p value other-value)
+                             (equalp value other-value))))))
+
 (defun added-primitives (exercised resting)
   "Return the primitives of EXERCISED that RESTING does not account for, by multiset difference
-under EQUALP, in EXERCISED order. Each is returned as (:POSITION n . primitive), N its zero-based
-position in EXERCISED."
+under SAME-DRAWING-P, in EXERCISED order. Each is returned as (:POSITION n . primitive), N its
+zero-based position in EXERCISED."
   (let ((unmatched (copy-list resting)))
     (loop for primitive in exercised
           for position from 0
-          for match = (member primitive unmatched :test #'equalp)
+          for match = (member primitive unmatched :test #'same-drawing-p)
           if match
             do (setf unmatched (remove (first match) unmatched :count 1 :test #'eq))
           else
@@ -341,8 +366,9 @@ position in EXERCISED."
 Return two values: the primitives the highlighted replay draws beyond the resting one, each as
 (:POSITION n . primitive) in highlighted-replay order; and the whole highlighted replay. A
 primitive is a plist as *DRAWING-LOG* describes. The presentation is unhighlighted even on a
-non-local exit. Signal FEEDBACK-STATE-NOT-RESTORED when the replay after unhighlighting differs
-from the resting one. Highlighting goes through CLIM:HIGHLIGHT-OUTPUT-RECORD: pointer motion and
+non-local exit. Signal FEEDBACK-STATE-NOT-RESTORED unless the replay after unhighlighting has
+as many primitives as the resting one and each is the same drawing as its resting counterpart by
+SAME-DRAWING-P. Highlighting goes through CLIM:HIGHLIGHT-OUTPUT-RECORD: pointer motion and
 sheet repaints never reach a medium on a headless port."
   (let ((resting (capture-replay pane))
         (exercised nil))
@@ -351,10 +377,12 @@ sheet repaints never reach a medium on a headless port."
            (highlight-output-record presentation pane :highlight)
            (setf exercised (capture-replay pane)))
       (highlight-output-record presentation pane :unhighlight))
-    (unless (equalp resting (capture-replay pane))
-      (error 'feedback-state-not-restored
-             :presentation-type (presentation-type presentation)
-             :box (multiple-value-list (bounding-rectangle* presentation))))
+    (let ((restored (capture-replay pane)))
+      (unless (and (= (length resting) (length restored))
+                   (every #'same-drawing-p resting restored))
+        (error 'feedback-state-not-restored
+               :presentation-type (presentation-type presentation)
+               :box (multiple-value-list (bounding-rectangle* presentation)))))
     (values (added-primitives exercised resting) exercised)))
 
 (defun union-box (boxes)
