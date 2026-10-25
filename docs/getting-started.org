@@ -1,0 +1,71 @@
+#+TITLE: Getting started
+#+OPTIONS: toc:2 num:nil
+
+[[file:index.org][Manual index]]
+
+* Requirements
+
+- SBCL :: Steel Bank Common Lisp. Both test suites pass on SBCL 2.6.9.
+- ASDF and UIOP :: ASDF (Another System Definition Facility) and UIOP (Utilities for Implementation- and OS-Portability) ship with SBCL.
+- Quicklisp :: from https://www.quicklisp.org. It supplies McCLIM's own dependencies.
+- McCLIM :: an implementation of the Common Lisp Interface Manager (CLIM), from upstream at https://codeberg.org/McCLIM/McCLIM. The adapter reads McCLIM's output records and was built against upstream commit =537f213e6=. A checkout at or near that commit is known to work; other McCLIM versions, including the one in the Quicklisp dist, have not been tested. The adapter needs two systems from that one tree: =clim= (=Core/clim.asd=) and =mcclim-null= (=Backends/Null/mcclim-null.asd=). It does not load the full =mcclim= system.
+- zebra :: the test framework, from https://github.com/fade/zebra. It is not in Quicklisp, and only the test systems need it.
+
+* Make the systems visible to ASDF
+
+Clone ekphrasis, McCLIM, and zebra into a directory Quicklisp scans for local projects:
+
+#+begin_src bash
+cd ~/quicklisp/local-projects/
+git clone https://github.com/fade/ekphrasis.git
+git clone https://codeberg.org/McCLIM/McCLIM.git
+git -C McCLIM checkout 537f213e6
+git clone https://github.com/fade/zebra.git
+#+end_src
+
+If a system is still not found after cloning, run =(ql:register-local-projects)= in your image. To keep the checkouts elsewhere, add their directories to your ASDF source registry instead.
+
+* Load
+
+| System                   | What it holds                                                                    |
+|--------------------------+----------------------------------------------------------------------------------|
+| =ekphrasis=              | The core: specs, comparison, reports, runs, colours, and contrast. No McCLIM.    |
+| =ekphrasis/mcclim=       | The McCLIM adapter: renders a frame pane headlessly and judges it.               |
+| =ekphrasis/tests=        | The core's zebra suite.                                                          |
+| =ekphrasis/mcclim/tests= | The adapter's zebra suite.                                                       |
+
+The core loads with no McCLIM at all, so a snapshot built by other means can be judged without a toolkit:
+
+#+begin_src lisp
+(ql:quickload "ekphrasis")
+#+end_src
+
+The adapter loads the core with it, then =clim= and =mcclim-null=. Quicklisp fetches McCLIM's own dependencies on the first load:
+
+#+begin_src lisp
+(ql:quickload "ekphrasis/mcclim")
+#+end_src
+
+* Run the tests
+
+Each system's test operation loads its zebra suite and runs it:
+
+#+begin_src lisp
+(asdf:test-system "ekphrasis")
+(asdf:test-system "ekphrasis/mcclim")
+#+end_src
+
+When any test fails, the call signals an error naming the test system, for example =ekphrasis/tests: one or more zebra tests failed.=, after zebra has printed each test's result.
+
+** Cold verification
+
+=scripts/cold-verify.sh= loads ekphrasis in a fresh SBCL with no init file and a private, empty fasl directory, so a missing package import or a stale compiled file cannot pass unnoticed. It loads the core and its tests, fails if that brought in CLIM, runs both suites, and prints =cold-verify: ok= when everything passes. The fasl directory is removed when the script exits.
+
+#+begin_src bash
+scripts/cold-verify.sh
+#+end_src
+
+The script reads two optional environment variables:
+
+- =QUICKLISP_SETUP= :: the path of Quicklisp's =setup.lisp=, by default =~/quicklisp/setup.lisp=. The script stops with an error when the file is not there.
+- =LISP_WORKSPACE= :: a directory the script pushes onto =asdf:*central-registry*= before loading, by default =~/SourceCode/lisp=. ASDF looks for system definition files directly inside that directory, not in its subdirectories. Checkouts under Quicklisp's local projects or in your ASDF source registry are found without this variable.

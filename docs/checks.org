@@ -1,0 +1,146 @@
+#+TITLE: Checks
+#+OPTIONS: toc:2 num:nil
+
+[[file:index.org][Manual index]]
+
+A spec describes what one view should show. ekphrasis renders the view, turns what it draws into a snapshot of drawn elements, and judges the snapshot against the spec. Each disagreement is a finding: an error, which fails, or a warning, which is reported without failing.
+
+* Write a spec
+
+A spec is a property list, read as data and never evaluated. Its keys may come in any order:
+
+#+begin_example
+(:view VIEW
+ :elements ((ID :kind KIND [:label LABEL] [:state STATE] [:states (STATE ...)])
+            ...)
+ [:order ((AXIS ID ID ...) ...)]
+ [:states ((KIND (STATE [:ink COLOUR] [:background COLOUR]) ...) ...)]
+ [:contrast ([:text RATIO] [:non-text RATIO])])
+#+end_example
+
+- =:view= :: a keyword naming the view. The report names the view by it, in lower case. Required.
+- =:elements= :: a non-empty list of element clauses, each opening with a keyword id used by no other clause. Required.
+  - =:kind= is a keyword: =:text=, =:fill=, or =:outline= for a mark drawn directly on the pane, or a control's kind (see [[*Drawn elements][Drawn elements]]). Required.
+  - =:label= is the text the element shows, a string. Leave it out only for an element drawn with no text: a missing label matches no text or empty text, so a control with text and no =:label= earns a =label= error.
+  - =:state= names the one state the element must be in; =:states= lists the states it may be in. Every state named here must be declared for the element's kind under the spec's =:states= key.
+- =:order= :: groups of elements that must sit in sequence. =AXIS= is =:left-to-right= or =:top-to-bottom=, and each group names at least two distinct ids that =:elements= declares.
+- =:states= :: per kind, the states an element of that kind may be in, and how each one looks. =COLOUR= is a ="#RRGGBB"= string or a list of three reals from 0 to 1. A state with no =:ink= or =:background= is declared but cannot be recognized from the drawing.
+- =:contrast= :: positive real thresholds that replace the defaults for this spec (see [[*Contrast thresholds][Contrast thresholds]]).
+
+A spec that is not well formed signals =ekphrasis:malformed-spec=. Its readers =ekphrasis:malformed-spec-clause= and =ekphrasis:malformed-spec-reason= return the offending clause and a sentence saying what is wrong with it. =ekphrasis:parse-spec= checks a spec without rendering anything.
+
+The README's first finding uses this spec, with one text mark, two controls, and an order group:
+
+#+begin_src lisp
+'(:view :bar
+  :elements ((:title :kind :text :label "Inbox")
+             (:reply :kind :action :label "Reply")
+             (:archive :kind :action :label "Archive"))
+  :order ((:left-to-right :reply :archive)))
+#+end_src
+
+This spec judges two controls of a =session-pill= presentation type by state. The first must be connected; the second may be idle or syncing. Text is held to a ratio of 7 instead of 4.5:
+
+#+begin_src lisp
+'(:view :status
+  :elements ((:link :kind :session-pill :label "Connected" :state :connected)
+             (:sync :kind :session-pill :label "Sync" :states (:idle :syncing)))
+  :states ((:session-pill (:connected :ink "#FFFFFF" :background "#1B7F3A")
+                          (:idle :background "#FFFFFF")
+                          (:syncing :background "#1F5FA8")))
+  :contrast (:text 7))
+#+end_src
+
+* Drawn elements
+
+=ekphrasis/mcclim:check-frame-pane= makes a fresh frame of the class you name on a headless port, runs the pane's display function once, and walks the pane's output records in painting order. Each element gets an id, counting from 1 in that order; a report line writes it as =#N=.
+
+- A text record is a =:text= element holding the string drawn.
+- A filled shape is a =:fill=, an unfilled shape is an =:outline=, and a pattern is a =:fill= of no fixed colour.
+- Each presentation is one element, a control, whose kind is its presentation type name as a keyword: type =action= gives =:action=. Its text is the text of the marks inside it, joined with one space, and for state appearances its colours are those of its first text mark. The marks inside it name it as their container, written =#C= after the view in a report line.
+
+Text is measured on a fixed-width grid: each character cell is 0.6 of the text size in pixels wide, with an ascent of 0.8 and a descent of 0.2 of it, each rounded. Keyword sizes run from =:tiny= at 8 pixels to =:huge= at 24, and the default is 12. Boxes are therefore repeatable from run to run, but they are not the extents of the font a screen would use.
+
+The =:render= argument of =ekphrasis/mcclim:check-frame-pane= is a property list of these keys:
+
+- =:width= and =:height= :: the frame's size in pixels, by default 900 by 60.
+- =:frame-initargs= :: further initialization arguments for the frame.
+- =:ink-resolver= :: a function of an ink and the pane returning the colour that ink paints, as an sRGB list and an alpha, or NIL when it has no fixed colour. By default it is =ekphrasis/mcclim:resolve-ink=.
+- =:state-function= :: a function of a presentation's object returning a keyword state, or NIL for none. That state is the control's reported state; any other value signals an error.
+- =:exercise-feedback= :: true by default: each control's highlight is judged as well (see [[*Highlight feedback][Highlight feedback]]). NIL judges the resting drawing alone.
+
+* Checks and their report lines
+
+| Check              | Severity | Reported when                                                                                                              |
+|--------------------+----------+----------------------------------------------------------------------------------------------------------------------------|
+| =missing=          | error    | no drawn element stands for a spec element                                                                                 |
+| =label=            | error    | the element standing for a spec element shows other text                                                                   |
+| =unexpected=       | warning  | a drawn element of a kind the spec names stands for no spec element                                                        |
+| =state=            | error    | the state judged is not the =:state= named, or not among the =:states= listed                                              |
+| =state-appearance= | error    | the reported state and the state the drawing shows differ                                                                  |
+| =order=            | error    | the members of an =:order= group are drawn out of sequence along its axis                                                  |
+| =contrast=         | error    | a =:text= or =:outline= mark's ink against what lies beneath it is below the threshold                                     |
+| =unresolved-ink=   | warning  | a =:text= or =:outline= mark has no fixed ink or background, or passes only on the sample points whose background is known |
+
+A report opens with =VIEW: N findings (E errors, W warnings)=, each noun singular for a count of one, or =VIEW: no findings=, then prints one line per finding, indented two spaces: the severity, the check, and the check's own text. A box prints as =(X1 Y1 X2 Y2)=, rounded to whole pixels. The lines take these shapes:
+
+#+begin_example
+  error missing :ID (KIND) in VIEW: expected "LABEL", none drawn
+  error label :ID #N (KIND) at (X1 Y1 X2 Y2) in VIEW: expected "LABEL", drawn "TEXT"
+  warning unexpected #N (KIND) at (X1 Y1 X2 Y2) in VIEW: drawn "TEXT", not in the spec
+  error state :ID #N (KIND) at (X1 Y1 X2 Y2) in VIEW: expected STATE, measured STATE (reported STATE, drawn STATE)
+  error state-appearance :ID #N (KIND) at (X1 Y1 X2 Y2) in VIEW: reported STATE, drawn as STATE
+  error order AXIS at (X1 Y1 X2 Y2) in VIEW: expected (ID ...), drawn (ID ...), displaced (ID ...)
+  error contrast [:ID] #N (KIND) at (X1 Y1 X2 Y2) in VIEW[ #C]: RATIO below THRESHOLD (ink #RRGGBB on #RRGGBB)[, label "TEXT"[ of :ID]][, only when highlighted]
+  warning unresolved-ink [:ID] #N (KIND) at (X1 Y1 X2 Y2) in VIEW[ #C]: ink has no fixed colour[, label "TEXT"[ of :ID]][, only when highlighted]
+#+end_example
+
+A label with no text prints as =no text=. A state prints in lower case, =none= when there is none, =one of (STATE ...)= for a list of allowed states, and =unknown= when the spec declares appearances for the kind and the drawing matches none of them. An =unresolved-ink= line says =ink and background have no fixed colour= or =background has no fixed colour= when those are what is missing, and adds =at some sample points= when the background is known at some of them. The [[file:../README.org][README]]'s first finding shows a complete =order= line from a real run.
+
+** Presence and labels
+
+Presence is judged over controls and over the marks outside any control. Each spec element, in spec order, takes the first free drawn element of its kind whose text matches its label. The spec elements still unpaired then take the free drawn elements of their kind position by position, in reading order (top first, then left), and an element paired this way with other text earns a =label= error. Kinds the spec does not name are not judged for presence.
+
+** State
+
+A spec element naming =:state= or =:states= is judged for state. The state judged is the one the state function reports for the control. With none reported, it is the first state declared for the kind whose appearance the drawing matches: its =:ink= and =:background=, where given, each channel within one 8-bit step.
+
+** Order
+
+Members of a group are placed by where they are drawn: the left edge of their box for =:left-to-right=, the top edge for =:top-to-bottom=, never their painting order. Each group out of sequence earns one =order= error. Its box bounds the group's drawn members, and its displaced members are those outside one longest run already in the described order. Members no drawn element stands for are skipped, and a group with fewer than two drawn members is not judged.
+
+** Contrast and unresolved ink
+
+Every =:text= and =:outline= mark is judged, in painting order, inside controls as well as outside them. Fills and controls themselves are not judged for contrast. A text mark is sampled at the centre of its box; an outline is sampled 2 pixels outside and 2 pixels inside the midpoint of each edge, and its lowest contrast among the points with a known background is judged. What lies beneath a point is the most recent earlier fill containing it, or the pane's background. A translucent ink is composited over what lies beneath it.
+
+A mark has no fixed ink when it is drawn with a flipping ink or a pattern, and no fixed background when a pattern or a fill of no fixed colour lies beneath it. Such a mark earns an =unresolved-ink= warning instead of a ratio. A mark that passes on the points whose background is known, while other points lie on something of no fixed colour, earns the same warning.
+
+* Highlight feedback
+
+With =:exercise-feedback= true, each control is highlighted in turn through McCLIM's own highlighting, and the drawing it adds is judged as marks inside that control, with state =:highlighted=:
+
+- Each text string the highlight draws is a =:text= mark.
+- The other drawing it adds is grouped by colour. Each group is a =:fill= when its filled shapes cover at least 90% of the group's box, otherwise an =:outline=.
+- Each of the control's resting text marks that lies within a highlight =:fill= is judged again on that fill, so a highlight that paints over a label, or leaves it too faint to read, is reported.
+
+These marks are judged for contrast and unresolved ink like any other mark, and their report lines end with =, only when highlighted=. The control is unhighlighted afterwards. If its drawing then differs from its resting drawing, =ekphrasis/mcclim:feedback-state-not-restored= is signalled, naming the presentation type and its box.
+
+* Contrast thresholds
+
+A ratio is the contrast ratio of WCAG 2.2 (the Web Content Accessibility Guidelines), from 1 to 21. A mark fails when its ratio is strictly below its threshold; neither number is rounded, so 4.499 fails a threshold of 4.5. The defaults, in =ekphrasis:*default-contrast-thresholds*=, are 4.5 for text and 3.0 for outlines and other non-text marks.
+
+Each threshold is taken from the first of these that sets it:
+
+1. the =:thresholds= argument of =ekphrasis/mcclim:check-frame-pane=, =ekphrasis:run-check=, or =ekphrasis:compare-snapshot=, a property list =(:text RATIO :non-text RATIO)=;
+2. the spec's =:contrast= key;
+3. =ekphrasis:*default-contrast-thresholds*=.
+
+* What ekphrasis does not check
+
+- Marks inside a control, for presence or label: a control's label is the joined text of its marks, and nothing else about them is judged except contrast and unresolved ink. Kinds a spec does not name are not judged for presence.
+- The contrast of fills and of controls themselves, and how glyphs are rendered or anti-aliased. Colours are read from the output records at the sample points, not from pixels.
+- Layout beyond order: overlap, clipping, content that runs past its container, alignment, spacing, and size. Boxes come from fixed-width metrics, not from a real font.
+- Anything beyond one pane per call: relations between panes or frames, references from one view to another, and whether a view can be reached by navigation.
+- Interaction beyond highlighting: pointer clicks, keyboard input, and commands.
+- Whether what McCLIM records is what reaches a screen. ekphrasis reads output records and replays of them, so drawing that is never recorded is not judged.
+- Other toolkits. McCLIM is the only adapter; the core judges any snapshot built with =ekphrasis:make-snapshot= and =ekphrasis:make-element=, with no toolkit loaded.

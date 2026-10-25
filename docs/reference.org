@@ -1,0 +1,66 @@
+#+TITLE: Reference
+#+OPTIONS: toc:2 num:nil
+
+[[file:index.org][Manual index]]
+
+The public API in brief. The core package is =ekphrasis=; the McCLIM adapter's package is =ekphrasis/mcclim=. Every symbol here is exported from the package named in its prefix, and docstrings in the image hold the full contracts. [[file:checks.org][Checks]] describes what each check reports.
+
+* Writing and parsing specs
+
+- =ekphrasis:parse-spec= =(form)= :: returns the spec =FORM= describes as a spec record, or =FORM= itself when it already is one. Signals =ekphrasis:malformed-spec= when =FORM= is not well formed, and never evaluates any part of it.
+- =ekphrasis:malformed-spec= :: the condition, an error. Its readers are =ekphrasis:malformed-spec-clause=, the offending sub-form, and =ekphrasis:malformed-spec-reason=, a string.
+- Spec records :: =ekphrasis:spec= and =ekphrasis:spec-element=, each with a constructor (=ekphrasis:make-spec=, =ekphrasis:make-spec-element=), a predicate (=ekphrasis:spec-p=, =ekphrasis:spec-element-p=), and the =spec-= and =spec-element-= readers for their slots.
+
+* Judging a pane
+
+- =ekphrasis/mcclim:check-frame-pane= =(spec frame-class pane-name &key observers render thresholds)= :: renders the pane named =PANE-NAME= of a fresh =FRAME-CLASS= frame headlessly and judges it against =SPEC=. =RENDER= holds the keyword arguments of =ekphrasis/mcclim:snapshot-frame-pane=. Returns what =ekphrasis:run-check= returns.
+- =ekphrasis/mcclim:snapshot-frame-pane= =(frame-class pane-name &key (width 900) (height 60) frame-initargs (ink-resolver #'ekphrasis/mcclim:resolve-ink) (state-function nil) (exercise-feedback t))= :: returns the snapshot of that pane: its resting elements, followed by the elements its controls' highlights add when =EXERCISE-FEEDBACK= is true. Signals an error when =STATE-FUNCTION= returns anything but a keyword or NIL, and =ekphrasis/mcclim:feedback-state-not-restored= when unhighlighting a control does not restore its resting drawing.
+
+* Judging a snapshot without a toolkit
+
+These need only the core system, =ekphrasis=.
+
+- =ekphrasis:run-check= =(spec source &key observers thresholds)= :: judges the view =SOURCE= renders against =SPEC=, notifying the observers. =SOURCE= is a snapshot or a function of no arguments returning one. Returns three values: the findings, the report string, and the snapshot. Signals =ekphrasis:malformed-spec= for a malformed spec before any event is delivered.
+- =ekphrasis:compare-snapshot= =(snapshot spec &key thresholds on-examine on-finding)= :: returns the findings for =SNAPSHOT= judged against =SPEC=, in the order made. =ON-EXAMINE= is called with each element and =ON-FINDING= with each finding, when given.
+
+* Findings and reports
+
+- =ekphrasis:format-report= =(view findings &optional stream)= :: writes the header line and one line per finding. With =STREAM= NIL, returns the report as a string.
+- =ekphrasis:format-finding= =(finding &optional stream)= :: writes one report line. With =STREAM= NIL, returns it as a string.
+- =ekphrasis:failing-findings= =(findings)= :: returns the findings whose severity is =:error=, in order.
+- The finding record :: =ekphrasis:finding=, with =ekphrasis:make-finding=, =ekphrasis:finding-p=, and the =finding-= readers for its slots (check, severity, spec id, view, container, element id, box, expected, measured, evidence, and detail). =ekphrasis:finding-where= returns where a finding is (view, container, element id, and box) and =ekphrasis:finding-why= why it was made (check, expected, measured, and evidence), each as a property list. =ekphrasis:finding-to-plist= and =ekphrasis:plist-to-finding= convert a finding to and from a property list.
+
+* Snapshots and elements
+
+- The snapshot record :: =ekphrasis:snapshot=, with =ekphrasis:make-snapshot=, =ekphrasis:snapshot-p=, =ekphrasis:snapshot-view=, and =ekphrasis:snapshot-elements=: a view name and its elements in painting order.
+- The element record :: =ekphrasis:element=, one mark a view draws, with =ekphrasis:make-element=, =ekphrasis:element-p=, and the =element-= readers for its slots (id, kind, text, box, container, state, ink, background, partly unresolved, and evidence). =ekphrasis:element-to-plist= and =ekphrasis:plist-to-element= convert an element to and from a property list.
+
+* Observers
+
+- =ekphrasis:observe-run-event= =(observer event)= :: the generic function a run calls to deliver each event to each observer. A function is an observer: the method for a function calls it with the event.
+- =ekphrasis:*run-observers*= :: the observers already attached; a run notifies these as well as the ones passed to it.
+
+An event is a property list whose =:event= is one of =:view-rendering=, =:element-examined=, =:finding=, or =:run-end=. Every attached observer receives exactly one =:run-end= per run, with an =:outcome= of =:completed= or =:aborted=.
+
+* Colour and contrast
+
+Colours are sRGB lists of three reals from 0 to 1.
+
+- =ekphrasis:parse-rgb= :: returns the sRGB list named by a ="#RRGGBB"= string or a list of three reals, or NIL when it names none.
+- =ekphrasis:rgb-to-hex= :: returns an sRGB list as an uppercase ="#RRGGBB"= string.
+- =ekphrasis:rgb-match-p= :: true when two sRGB lists differ by at most one 8-bit step on every channel.
+- =ekphrasis:composite-over= :: returns an ink at an opacity painted over a background.
+- =ekphrasis:relative-luminance= and =ekphrasis:contrast-ratio= :: the WCAG 2.2 relative luminance of a colour, and the contrast ratio of two.
+- =ekphrasis:below-threshold-p= :: true when a ratio is strictly below a threshold.
+- =ekphrasis:resolve-thresholds= :: returns the thresholds in force, from a call's thresholds, then a spec's, then the defaults.
+- =ekphrasis:*default-contrast-thresholds*= :: =(:text 4.5 :non-text 3.0)=.
+
+* Headless rendering and highlight internals
+
+These are exported from =ekphrasis/mcclim= for tests and for code that works below =ekphrasis/mcclim:snapshot-frame-pane=.
+
+- =ekphrasis/mcclim:call-with-rendered-pane= =(frame-class pane-name function &key (width 900) (height 60) frame-initargs)= :: renders the pane headlessly, calls =FUNCTION= with the frame and the pane, and returns its values. The frame is disowned and the port destroyed before it returns, normally or not.
+- =ekphrasis/mcclim:exercise-feedback-state= =(pane presentation)= :: highlights =PRESENTATION= on =PANE=, captures the drawing, and unhighlights it. Returns two values: the drawing primitives the highlight adds, and the whole highlighted replay. Signals =ekphrasis/mcclim:feedback-state-not-restored= when unhighlighting does not restore the resting drawing; its readers are =ekphrasis/mcclim:feedback-state-presentation-type= and =ekphrasis/mcclim:feedback-state-box=.
+- =ekphrasis/mcclim:capture-replay= =(pane)= :: replays the pane's output history and returns the drawing primitives, in drawing order, leaving the history as it was.
+- =ekphrasis/mcclim:resolve-ink= =(ink pane)= :: returns the fixed colour =INK= paints on =PANE= as an sRGB list and an alpha, or NIL for an ink of no fixed colour, such as a flipping ink or a pattern.
+- The fixed-width port :: =ekphrasis/mcclim:fixed-width-port= and =ekphrasis/mcclim:fixed-width-medium=, made by =ekphrasis/mcclim:make-fixed-width-port=. =ekphrasis/mcclim:text-style-pixels= gives a text style's size in pixels and is the default value of =ekphrasis/mcclim:*text-pixels-function*=. =ekphrasis/mcclim:*drawing-log*= collects the drawing primitives the medium records while =ekphrasis/mcclim:*drawing-log*= is bound to a vector.

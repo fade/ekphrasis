@@ -18,25 +18,56 @@
 
 Check what a user interface actually renders against a written description of what it should show.
 
-You describe a view as Lisp data: the elements it should show, their labels, the order they sit in, and the states they can be in. ekphrasis renders a McCLIM pane headlessly and reports each element that is missing, mislabelled, out of order, in the wrong state, or too faint to see. Each finding says where the element is drawn and why it fails. It also puts each control into its highlighted state for you, and reports a highlight too faint to see against its background, or one that paints over the control's label.
+You describe a view as Lisp data: the elements it should show, their labels, the order they sit in, and the states they can be in. ekphrasis renders a McCLIM pane headlessly and reports each element that is missing, mislabelled, out of order, in the wrong state, or too faint to see. Each finding says where the element is drawn and why it fails. It also puts each control into its highlighted state for you, and reports a highlight too faint against its background, or one that paints over the control's label.
 
 I named the library for sense 2 with its order reversed. In sense 2 the picture comes first and the words follow it; here you write the description first, and ekphrasis reports where the rendering departs from it.
 
-* Requirements
+* Status
 
-- SBCL 2.x
-- ASDF 3.x
-- All deps available via =$LISP_WORKSPACE/= or Quicklisp
+ekphrasis is at version 0.1.0. It is a library you call from a Lisp image, with no command-line interface yet. The McCLIM adapter is the only one: it renders a pane on a headless port that measures text on a fixed-width grid, so the boxes in a report are repeatable but are not the extents of a real font. Layout beyond order, relations between panes and views, and what reaches a screen are not checked yet; [[file:docs/checks.org][Checks]] ends with the full list of what ekphrasis does not check.
 
-* Load
+* Install
+
+ekphrasis runs on SBCL (Steel Bank Common Lisp) with Quicklisp. The adapter needs upstream McCLIM, an implementation of the Common Lisp Interface Manager (CLIM), and the test suites need zebra, which is not in Quicklisp. [[file:docs/getting-started.org][Getting started]] says where each one comes from and how to make it visible to ASDF (Another System Definition Facility). With those in place, load the McCLIM adapter, which brings the core in with it:
 
 #+begin_src lisp
-(asdf:load-system :ekphrasis)
+(ql:quickload "ekphrasis/mcclim")
 #+end_src
 
-* Use
+* A first finding
 
-Write a spec: the description of a view, as Lisp data. This one names a title and two controls, and says the controls run from left to right:
+This example defines a toolbar whose pane draws a title and two controls, describes the toolbar with Reply to the left of Archive, and checks the pane against that description. The pane draws Archive first.
+
+Define a package, a presentation type for the controls, and a frame whose =bar= pane draws the title as text and each control as an =action= presentation:
+
+#+begin_src lisp
+(defpackage #:toolbar-example
+  (:use #:clim-lisp #:clim))
+
+(in-package #:toolbar-example)
+
+(define-presentation-type action ())
+
+(define-application-frame toolbar ()
+  ()
+  (:menu-bar nil)
+  (:panes
+   (bar :application
+        :display-function 'draw-toolbar
+        :scroll-bars nil))
+  (:layouts
+   (default bar)))
+
+(defun draw-toolbar (frame pane)
+  (declare (ignore frame))
+  (draw-text* pane "Inbox" 10 20)
+  (with-output-as-presentation (pane :archive 'action)
+    (draw-text* pane "Archive" 100 20))
+  (with-output-as-presentation (pane :reply 'action)
+    (draw-text* pane "Reply" 180 20)))
+#+end_src
+
+Write the description as Lisp data: a title reading Inbox, two =action= controls labelled Reply and Archive, and Reply to the left of Archive:
 
 #+begin_src lisp
 (defparameter *toolbar-spec*
@@ -47,46 +78,35 @@ Write a spec: the description of a view, as Lisp data. This one names a title an
     :order ((:left-to-right :reply :archive))))
 #+end_src
 
-Then judge a pane against it. Here =toolbar= is an application frame, and the last argument names the pane to judge: its =bar= pane draws the title as text and each control as an =action= presentation:
+Check the =bar= pane of a fresh =toolbar= frame against it, and print the report:
 
 #+begin_src lisp
-(asdf:load-system :ekphrasis/mcclim)
-(ekphrasis/mcclim:check-frame-pane *toolbar-spec* 'toolbar 'bar)
+(multiple-value-bind (findings report)
+    (ekphrasis/mcclim:check-frame-pane *toolbar-spec* 'toolbar 'bar)
+  (declare (ignore findings))
+  (write-line report)
+  (values))
 #+end_src
 
-You get back the findings, a report, and the snapshot they were judged on. When the pane draws Archive to the left of Reply, the report reads:
+=ekphrasis/mcclim:check-frame-pane= returns three values: the findings, the report string, and the snapshot of drawn elements the findings were judged on. The report reads:
 
 #+begin_example
 bar: 1 finding (1 error, 0 warnings)
-  error order left-to-right at (100 10 235 22) in bar: expected (reply archive), drawn (archive reply), displaced (archive)
+  error order left-to-right at (100 10 215 22) in bar: expected (reply archive), drawn (archive reply), displaced (archive)
 #+end_example
 
-* Test
+The second line is one error from the order check, along the left-to-right axis. The box after =at= bounds both controls, as =(x1 y1 x2 y2)= in pane coordinates. The description lists Reply then Archive, the pane draws Archive then Reply, and Archive is the control displaced from the described order. With Reply drawn to the left of Archive, the same call prints =bar: no findings=.
 
-Each system has its own suite:
+* Documentation
 
-#+begin_src lisp
-(asdf:test-system :ekphrasis)          ; specs, comparison, and reports
-(asdf:test-system :ekphrasis/mcclim)   ; the McCLIM adapter and its controls
-#+end_src
+The manual, starting at [[file:docs/index.org][docs/index.org]], covers the rest:
 
-=scripts/cold-verify.sh= runs both suites in a fresh SBCL with an empty fasl cache, fails if loading =ekphrasis= on its own brings in McCLIM, and prints =cold-verify: ok= when everything passes.
-
-* Run
-
-#+begin_src bash
-# Foreground:
-sbcl --eval '(asdf:load-system :ekphrasis)' --eval '(ekphrasis/src/main:main)'
-
-# Build binary:
-./build.sh
-
-# Dev image (Slynk listener):
-./scripts/dev-boot.sh
-#+end_src
+- [[file:docs/getting-started.org][Getting started]]: requirements and where each comes from, loading each system, and running the tests.
+- [[file:docs/checks.org][Checks]]: writing a spec, each check and the report line it prints, and what ekphrasis does not check.
+- [[file:docs/reference.org][Reference]]: the public API in brief, grouped by purpose.
 
 * Licence
 
-AGPL-3.0-or-later; see =LICENSE=.
+ekphrasis is licensed under the GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later); see [[file:LICENSE][LICENSE]].
 
 Copyright (c) 2026 Brian O'Reilly.
