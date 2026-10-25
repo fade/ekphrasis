@@ -643,6 +643,63 @@ one highlighted text is white on its drawn-state fill."
                            (rgb-match-p (parse-rgb "#802929") background)))
                   "~A background ~S" (element-text pill) background)))))))
 
+(define-test exercised-run-completes-over-a-pattern
+  "A pattern inside a single-box pill, or beside the pills, survives a default exercised run. The
+patterned pills yield no findings exercised or at rest, and each pill gains one highlighted
+element, its frame outline. The pattern beneath the title yields the title's unresolved-ink
+warning and one label-hidden contrast error per band pill."
+  (flet ((run (variant &optional render)
+           (handler-case (multiple-value-list
+                          (check-fixture (fixture-spec) :variant variant :render render))
+             (error (condition) condition)))
+         (pills (snapshot)
+           (remove :session-pill (snapshot-elements snapshot)
+                   :key #'element-kind :test-not #'eq)))
+    (let ((outcome (run :patterned-pills)))
+      (false (typep outcome 'error) "patterned pills exercised: ~A" outcome)
+      (unless (typep outcome 'error)
+        (destructuring-bind (findings report snapshot &rest more) outcome
+          (declare (ignore more))
+          (true (null findings) "patterned pills exercised: ~A" report)
+          (dolist (pill (pills snapshot))
+            (let ((highlighted (remove-if-not
+                                (lambda (element)
+                                  (and (eq :highlighted (element-state element))
+                                       (eql (element-id pill) (element-container element))))
+                                (snapshot-elements snapshot))))
+              (is = 1 (length highlighted) "~A: ~A" (element-text pill) report)
+              (is eq :outline (and highlighted (element-kind (first highlighted)))
+                  "~A: ~A" (element-text pill) report))))))
+    (let ((outcome (run :patterned-pills *resting*)))
+      (false (typep outcome 'error) "patterned pills at rest: ~A" outcome)
+      (unless (typep outcome 'error)
+        (true (null (first outcome)) "patterned pills at rest: ~A" (second outcome))))
+    (let ((outcome (run :pattern-fill)))
+      (false (typep outcome 'error) "pattern fill exercised: ~A" outcome)
+      (unless (typep outcome 'error)
+        (destructuring-bind (findings report snapshot &rest more) outcome
+          (declare (ignore more))
+          (is = 4 (length findings) "~A" report)
+          (let ((warning (find :unresolved-ink findings :key #'finding-check)))
+            (true warning "~A" report)
+            (when warning
+              (is eq :warning (finding-severity warning) "~A" report)
+              (is eq :title (finding-spec-id warning) "~A" report)))
+          (dolist (pill (pills snapshot))
+            (let ((own (remove-if-not (lambda (finding)
+                                        (and (eq :contrast (finding-check finding))
+                                             (eql (element-id pill) (finding-container finding))))
+                                      findings)))
+              (is = 1 (length own) "~A: ~A" (element-text pill) report)
+              (let* ((finding (first own))
+                     (label (and finding (found-element finding snapshot))))
+                (when finding
+                  (is eq :error (finding-severity finding) "~A" report)
+                  (true (and label
+                             (eq :text (element-kind label))
+                             (eq :highlighted (element-state label)))
+                        "~A: ~A" (element-text pill) report))))))))))
+
 (defun check-case (case)
   "Judge the battery CASE, a plist (:FRAME frame :VARIANT variant :RENDER render), against the
 fixture spec and return what CHECK-FIXTURE returns."

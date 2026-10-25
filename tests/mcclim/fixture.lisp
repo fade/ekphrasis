@@ -96,6 +96,11 @@ redraws the label on it in the pill's drawn-state fill.
 flipping ink and redraws the label on it in white.
 :OVERLAY-PILLS presents each pill as single-box; its highlight veils the pill in white at 15%
 opacity and draws nothing else.
+:PATTERNED-PILLS presents each pill as single-box, with a small black and white pattern swatch
+inside it clear of its label and its frame.
+:STICKY-HIGHLIGHT-PILLS presents each pill as single-box; unhighlighting leaves a white 1 px mark
+at the pill's top-left corner, so its drawing is never restored. It exists to prove a real restore
+failure is reported.
 :COMBINED carries four defects at once: no charlie, bravo left of alpha, alpha fenced and drawn
 so, and the target box in black.")
 
@@ -132,7 +137,7 @@ shows alpha attached, bravo fenced, and charlie attached."
     ((:clean :untitled :low-contrast-text :low-contrast-outline :translucent-title
       :flipping-outline :single-box-pills :bordered-pills :flipping-fill :pattern-fill
       :redrawn-label-pills :flipping-highlight-pills :solid-pills :overlay-pills :badge-pills
-      :hidden-frame-round-pattern :frame-round-pattern)
+      :hidden-frame-round-pattern :frame-round-pattern :patterned-pills :sticky-highlight-pills)
      (list (make-fixture-session "alpha" :attached)
            (make-fixture-session "bravo" :fenced)
            (make-fixture-session "charlie" :attached)))
@@ -205,7 +210,9 @@ feedback is drawn in the foreground.")
 The pill is eleven filled bands 2 px tall from y 8 to 30 in its drawn-state fill, an unfilled
 gray80 border through its corners, and its white label; under :SOLID-PILLS one filled rectangle
 from y 8 to 30 replaces the bands. Under :SINGLE-BOX-PILLS, :REDRAWN-LABEL-PILLS,
-:FLIPPING-HIGHLIGHT-PILLS, and :OVERLAY-PILLS the presentation is single-box. Under
+:FLIPPING-HIGHLIGHT-PILLS, :OVERLAY-PILLS, :PATTERNED-PILLS, and :STICKY-HIGHLIGHT-PILLS the
+presentation is single-box. Under :PATTERNED-PILLS a 6 by 4 black and white pattern swatch is
+drawn after the bands and before the border, from (left + 3, 9) to (left + 9, 13). Under
 :BORDERED-PILLS the pill is instead its white label inside a rounded border whose background is
 the drawn-state fill and whose highlight background is that state's highlight fill. Under
 :BADGE-PILLS the border's background is black and its highlight background white, and inside it
@@ -215,7 +222,8 @@ fill. Return the pill's left edge."
          (left (- right (+ (text-size pane label) 24)))
          (state (fixture-session-drawn-state session))
          (single-box (and (member *fixture-variant* '(:single-box-pills :redrawn-label-pills
-                                                       :flipping-highlight-pills :overlay-pills))
+                                                       :flipping-highlight-pills :overlay-pills
+                                                       :patterned-pills :sticky-highlight-pills))
                           t)))
     (if (member *fixture-variant* '(:bordered-pills :badge-pills))
         (let* ((badge (eq *fixture-variant* :badge-pills))
@@ -239,6 +247,12 @@ fill. Return the pill's left edge."
                   (loop for top from 8 below 30 by 2
                         do (draw-rectangle* pane left top right (+ top 2)
                                             :filled t :ink fill))))
+            (when (eq *fixture-variant* :patterned-pills)
+              (let ((indices (make-array '(4 6))))
+                (dotimes (row 4)
+                  (dotimes (column 6)
+                    (setf (aref indices row column) (mod (+ row column) 2))))
+                (draw-pattern* pane (make-pattern indices (list +black+ +white+)) (+ left 3) 9)))
             (draw-polygon* pane (list left 8 right 8 right 30 left 30)
                            :closed t :filled nil :ink +gray80+)
             (draw-text* pane label (+ left 12) 25 :ink +white+))
@@ -248,8 +262,10 @@ fill. Return the pill's left edge."
 ;;; box in white at 15% opacity and draw nothing else; under :REDRAWN-LABEL-PILLS, fill the box
 ;;; in white and redraw its label on it, centred, in the drawn-state fill; under
 ;;; :FLIPPING-HIGHLIGHT-PILLS, fill the box in the flipping ink and redraw the label in white.
-;;; Otherwise, and on :UNHIGHLIGHT, draw what the next method draws. A pill is its label's width
-;;; plus 12 px each side, so the centred label lands on the resting label's box.
+;;; Under :STICKY-HIGHLIGHT-PILLS, on :UNHIGHLIGHT, fill a 1 px white square at the box's top-left
+;;; corner, so a real restore failure is there to be reported. Otherwise draw what the next method
+;;; draws. A pill is its label's width plus 12 px each side, so the centred label lands on the
+;;; resting label's box.
 
 (define-presentation-method highlight-presentation ((type session-pill) record stream state)
   (let ((variant *fixture-variant*))
@@ -268,6 +284,9 @@ fill. Return the pill's left edge."
                             :filled t :ink (if redrawn +white+ +flipping-ink+))
            (draw-text* stream (fixture-session-name session) (/ (+ x1 x2) 2) 25
                        :align-x :center :ink (if redrawn state-ink +white+)))))
+      ((and (eq state :unhighlight) (eq variant :sticky-highlight-pills))
+       (multiple-value-bind (x1 y1) (bounding-rectangle* record)
+         (draw-rectangle* stream x1 y1 (1+ x1) (1+ y1) :filled t :ink +white+)))
       (t (call-next-method)))))
 
 (defun display-fixture-view (frame pane)

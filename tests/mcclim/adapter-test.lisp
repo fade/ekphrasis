@@ -28,6 +28,7 @@
   (:import-from #:ekphrasis/mcclim
                 #:capture-replay
                 #:exercise-feedback-state
+                #:feedback-state-not-restored
                 #:resolve-ink)
   (:import-from #:ekphrasis/tests/mcclim/fixture
                 #:*attached-highlight-fill*
@@ -435,16 +436,34 @@ before its label; nothing frames or fills the label alone."
 
 (define-test feedback-state-is-restored
   "Exercising a pill signals nothing, and exercising it again gives the same primitives, for the
-default, single-box, and bordered pills."
-  (dolist (variant '(:clean :single-box-pills :bordered-pills))
+default, single-box, bordered, and patterned pills."
+  (dolist (variant '(:clean :single-box-pills :bordered-pills :patterned-pills))
     (call-with-fixture-pane
      (lambda (pane)
        (dolist (presentation (fixture-presentations pane))
-         (let ((first (handler-case (exercise-feedback-state pane presentation)
-                        (error (condition) condition))))
-           (false (typep first 'error) "~A: ~A" variant first)
-           (true (equalp first (exercise-feedback-state pane presentation)) "~A" variant))))
+         (flet ((exercise ()
+                  (handler-case (exercise-feedback-state pane presentation)
+                    (error (condition) condition))))
+           (let* ((first (exercise))
+                  (second (exercise)))
+             (false (typep first 'error) "~A: ~A" variant first)
+             (false (typep second 'error) "~A again: ~A" variant second)
+             (unless (or (typep first 'error) (typep second 'error))
+               (true (equalp first second) "~A" variant))))))
      :variant variant)))
+
+(define-test unrestored-highlight-is-signalled
+  "A highlight that leaves a mark behind after unhighlighting signals FEEDBACK-STATE-NOT-RESTORED,
+from exercising each pill and from a default render."
+  (call-with-fixture-pane
+   (lambda (pane)
+     (dolist (presentation (fixture-presentations pane))
+       (let ((result (handler-case (exercise-feedback-state pane presentation)
+                       (error (condition) condition))))
+         (true (typep result 'feedback-state-not-restored)
+               "~A: ~A" (fixture-session-name (presentation-object presentation)) result))))
+   :variant :sticky-highlight-pills)
+  (fail (render-fixture :variant :sticky-highlight-pills) feedback-state-not-restored))
 
 (define-test resting-elements-unchanged-by-exercise
   "The elements a render holds at rest are the same with highlight feedback exercised as without."
