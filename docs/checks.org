@@ -3,7 +3,7 @@
 
 [[file:index.org][Manual index]]
 
-A spec describes what one view should show. ekphrasis renders the view, turns what it draws into a snapshot of drawn elements, and judges the snapshot against the spec. Each disagreement is a finding: an error, which fails, or a warning, which is reported without failing.
+A spec describes what one view should show. ekphrasis renders the view, turns what it draws into a snapshot of drawn elements, and judges the snapshot against the spec. Each disagreement is a finding: an error or a warning. Both are returned and reported; =ekphrasis:failing-findings= returns the errors and leaves out the warnings.
 
 * Write a spec
 
@@ -127,7 +127,7 @@ These marks are judged for contrast and unresolved ink like any other mark, and 
 
 * Contrast thresholds
 
-A ratio is the contrast ratio of WCAG 2.2 (the Web Content Accessibility Guidelines), from 1 to 21. A mark fails when its ratio is strictly below its threshold; neither number is rounded, so 4.499 fails a threshold of 4.5. The defaults, in =ekphrasis:*default-contrast-thresholds*=, are 4.5 for text and 3.0 for outlines and other non-text marks.
+A ratio is the contrast ratio of WCAG 2.2 (the Web Content Accessibility Guidelines), from 1 to 21. A mark fails when its ratio is strictly below its threshold; neither number is rounded, so 4.499 fails a threshold of 4.5. The report prints both to two decimal places, so that finding reads =4.50 below 4.50=. The defaults, in =ekphrasis:*default-contrast-thresholds*=, are 4.5 for text and 3.0 for outlines and other non-text marks.
 
 Each threshold is taken from the first of these that sets it:
 

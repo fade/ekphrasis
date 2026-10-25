@@ -18,7 +18,7 @@
 
 Check what a user interface actually renders against a written description of what it should show.
 
-You describe a view as Lisp data: the elements it should show, their labels, the order they sit in, and the states they can be in. ekphrasis renders a McCLIM pane headlessly and reports each element that is missing, mislabelled, out of order, in the wrong state, or too faint to see. Each finding says where the element is drawn and why it fails. It also puts each control into its highlighted state for you, and reports a highlight too faint against its background, or one that paints over the control's label.
+You describe a view as Lisp data: the elements it should show, their labels, the order they sit in, and the states they can be in. ekphrasis renders a McCLIM pane headlessly and reports each element that is missing, mislabelled, out of order, in the wrong state, or too faint to see. Each finding names the check that failed, what was expected, and what was drawn, with the box it was drawn in whenever there is a drawing to locate. ekphrasis also puts each control into its highlighted state for you, and reports an outline highlight too faint against its background, or a filled highlight that hides the control's label or leaves it too faint to read.
 
 I named the library for sense 2 with its order reversed. In sense 2 the picture comes first and the words follow it; here you write the description first, and ekphrasis reports where the rendering departs from it.
 

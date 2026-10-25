@@ -48,9 +48,10 @@ The adapter loads the core with it, then =clim= and =mcclim-null=. Quicklisp fet
 
 * Run the tests
 
-Each system's test operation loads its zebra suite and runs it:
+The test operation loads each suite but fetches nothing, and zebra needs =documentation-utils=, =trivial-custom-debugger=, and =form-fiddle= from Quicklisp. Load the test systems once through Quicklisp so those are fetched, then run each system's test operation:
 
 #+begin_src lisp
+(ql:quickload '("ekphrasis/tests" "ekphrasis/mcclim/tests"))
 (asdf:test-system "ekphrasis")
 (asdf:test-system "ekphrasis/mcclim")
 #+end_src
@@ -68,4 +69,4 @@ scripts/cold-verify.sh
 The script reads two optional environment variables:
 
 - =QUICKLISP_SETUP= :: the path of Quicklisp's =setup.lisp=, by default =~/quicklisp/setup.lisp=. The script stops with an error when the file is not there.
-- =LISP_WORKSPACE= :: a directory the script pushes onto =asdf:*central-registry*= before loading, by default =~/SourceCode/lisp=. ASDF looks for system definition files directly inside that directory, not in its subdirectories. Checkouts under Quicklisp's local projects or in your ASDF source registry are found without this variable.
+- =LISP_WORKSPACE= :: a directory the script pushes onto =asdf:*central-registry*= before loading, by default =~/SourceCode/lisp=, the author's own layout. ASDF looks for system definition files directly inside that directory, not in its subdirectories, and ignores a directory that does not exist. Checkouts under Quicklisp's local projects or in your ASDF source registry are found without this variable.
