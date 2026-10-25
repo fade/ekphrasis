@@ -401,10 +401,12 @@ Each entry is (:CLASS class :CHECK check :MARK mark :CONTROL case :TWINS cases).
 finding check the control must yield as an error. MARK is NIL, or (kind state) naming the kind
 and state of the element that finding must name. A case is a plist (:FRAME frame :VARIANT variant
 :RENDER render) of CHECK-FIXTURE arguments. Resting classes are rendered with highlight feedback
-off; the interaction-only classes exercise it. The label-hidden class's twins are the highlight
-idioms that leave the label legible: one thin frame, a redrawn bordered background, solid pills
-framed round the label, a label redrawn on the highlight, a translucent veil, a label on a badge
-inside a redrawn bordered background, and the band pills under a black highlight."
+off; the interaction-only classes exercise it. The invisible-frame class's twins are the
+single-box frame on the light-foreground frame, alone and with a pattern inside the control. The
+label-hidden class's twins are the highlight idioms that leave the label legible: one thin frame,
+a redrawn bordered background, solid pills framed round the label, a label redrawn on the
+highlight, a translucent veil, a label on a badge inside a redrawn bordered background, and the
+band pills under a black highlight."
   (let ((resting (list :exercise-feedback nil)))
     (flet ((at-rest (variant)
              (list :frame 'fixture-view :variant variant :render resting))
@@ -427,7 +429,7 @@ inside a redrawn bordered background, and the band pills under a black highlight
             (list :class :interaction-only-not-perceivable :check :contrast
                   :mark '(:outline :highlighted)
                   :control (exercised :single-box-pills 'dark-ink-fixture-view)
-                  :twins (list (exercised :single-box-pills)))
+                  :twins (list (exercised :single-box-pills) (exercised :patterned-pills)))
             (list :class :highlight-hides-label :check :contrast :mark '(:text :highlighted)
                   :control (exercised :clean)
                   :twins (list (exercised :single-box-pills) (exercised :bordered-pills)
