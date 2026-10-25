@@ -1,0 +1,16 @@
+#+TITLE: ekphrasis manual
+#+OPTIONS: toc:nil num:nil
+
+This manual covers installing and testing ekphrasis, writing a spec, each check and the report line it prints, what ekphrasis does not check, and the public API. The [[file:../README.org][README]] is the short introduction and the quickest path to a first finding.
+
+* Pages
+
+- [[file:getting-started.org][Getting started]]: requirements and where each comes from, making the systems visible to ASDF, loading each system, and running the tests.
+- [[file:checks.org][Checks]]: the spec grammar, what counts as a drawn element, each check with its severity and report line, highlight feedback, contrast thresholds, and what ekphrasis does not check.
+- [[file:reference.org][Reference]]: the public API in brief, grouped by purpose.
+
+* Conventions
+
+- Source blocks are Common Lisp unless marked =bash=; example blocks show spec grammar or report output.
+- Package names are written in full: =ekphrasis= for the core, =ekphrasis/mcclim= for the McCLIM adapter.
+- In grammar and report-line shapes, words in capitals stand for values you supply or ekphrasis prints, and square brackets mark an optional part.
